@@ -1,0 +1,899 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<style>
+body { background-color: #050505; margin: 0; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; height: 100vh; font-family: sans-serif; }
+.console { background: #1a1a1a; padding: 25px; border-radius: 12px; border: 2px solid #333; display: flex; flex-direction: column; align-items: center; gap: 15px; }
+.display-row { display: flex; gap: 20px; align-items: flex-end; }
+.unit { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.label { color: #eee; font-weight: bold; font-size: 16px; font-family: sans-serif; }
+.meter { position: relative; width: 280px; height: 150px; background-color: #fdfae1; overflow: hidden; border-radius: 4px; border: 1px solid #444; }
+.scope { position: relative; width: 220px; height: 220px; background-color: #000; border: 1px solid #444; border-radius: 4px; }
+.needle {
+    position: absolute;
+    top: 170px;
+    left: 140px;
+    width: 0;
+    height: 145px;
+    margin-top: -145px;
+    transform-origin: bottom center;
+    z-index: 10;
+}
+
+.needle::before {
+    content: "";
+    position: absolute;
+    left: -3px;
+    bottom: 0;
+    width: 6px;
+    height: 145px;
+    background: #111;
+    clip-path: polygon(
+        33% 0%,
+        67% 0%,
+        100% 100%,
+        0% 100%
+    );
+}
+    
+.controls { display: flex; flex-wrap: wrap; justify-content: center; gap: 20px; color: #aaa; margin-top: 10px; }
+.knob-group { display: flex; flex-direction: column; align-items: center; gap: 5px; font-size: 12px; }
+select { background: #333; color: #fff; border: 1px solid #555; padding: 5px; border-radius: 4px; width: 200px; margin-bottom: 10px; }
+input[type=range] { width: 130px; cursor: pointer; }
+#btn { padding: 10px 30px; cursor: pointer; font-weight: bold; border-radius: 4px; border: none; background: #444; color: white; }
+#btn.on { background: #d00; }
+canvas { position: absolute; top: 0; left: 0; z-index: 5; }
+    .rta-window {
+    width:760px;
+    height:260px;
+    background:#050505;
+    border:1px solid #444;
+    box-sizing:border-box;
+}
+
+#rtaCanvas {
+    position:static;
+    display:block;
+}
+    .rta-panel{
+    background:#1a1a1a;
+    border:2px solid #333;
+    border-radius:12px;
+    padding:15px;
+    margin-top:15px;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    gap:10px;
+}
+.pbtn{
+    width:74px;
+    height:28px;
+    padding:0;
+    box-sizing:border-box;
+    background:#2a2a2a;
+    color:#ddd;
+    border:1px solid #555;
+    border-radius:6px;
+    font-size:12px;
+    font-weight:bold;
+    letter-spacing:1px;
+    cursor:pointer;
+    transition:background .12s, border-color .12s;
+}
+.pbtn:hover{ background:#383838; border-color:#777; }
+.pbtn:active{ background:#1c1c1c; }
+.pbtn.on{ background:#0a7a3c; border-color:#16c060; color:#fff; }
+.pbtn.wide{ width:150px; }
+#mainPanel{
+    transform-origin: top center;
+}
+    
+</style>
+</head>
+<body>
+    <div id="mainPanel">
+<div class="console">
+  
+
+<div class="display-row">
+    <div class="unit" id="vuGroup">
+<div style="display:flex; align-items:flex-end; gap:70px;">
+    <button id="btn">POWER OFF</button>
+
+    <div class="knob-group">
+        <label style="color:#0f0">
+            SELECT INPUT DEVICE:
+        </label>
+
+        <select id="micSelect">
+            <option value="">
+                -- Device List --
+            </option>
+        </select>
+    </div>
+
+</div>
+<div style="height:20px;"></div>
+        
+   <div style="display:flex; flex-direction:column; align-items:center; margin-bottom:2px;">
+    <input type="range" id="vuGainCoarse" min="0" max="40" step="1" value="20">
+    <input type="range" id="vuGainFine" min="-1" max="1" step="0.1" value="0">
+    <span id="vuVal">0.0 dB</span>
+</div>
+
+<div style="display:flex; gap:20px; align-items:flex-start;">
+
+    <div class="unit">
+        <div class="label">L-VU</div>
+        <div class="meter">
+            <canvas id="cvsL" width="280" height="150"></canvas>
+            <div id="ndlL" class="needle"></div>
+        </div>
+    </div>
+
+    <div class="unit">
+        <div class="label">R-VU</div>
+        <div class="meter">
+            <canvas id="cvsR" width="280" height="150"></canvas>
+            <div id="ndlR" class="needle"></div>
+        </div>
+    </div>
+
+</div>
+</div>
+   <div class="unit">
+
+        <input type="range" id="scopeGain" min="0.1" max="5.0" step="0.1" value="1.0">
+        <span id="scopeVal">x1.0</span>
+
+        <div class="label">PHASE SCOPE</div>
+
+        <div class="scope">
+            <canvas id="cvsScope" width="220" height="220"></canvas>
+        </div>
+
+    </div>
+
+    <div class="unit" style="width:170px;">
+        <div class="label">LOUDNESS</div>
+
+        <div style="color:#0f0; margin-top:5px; font-size:20px; font-weight:bold; font-variant-numeric:tabular-nums; width:170px; text-align:center; white-space:nowrap;" id="lkfsVal">--.- LKFS</div>
+        <div style="font-size:11px; color:#aaa;">INTEGRATED</div>
+
+        <div style="font-size:12px; color:#aaa;">M　　S</div>
+
+        <div style="display:flex; gap:10px; align-items:flex-end;">
+            <div style="width:20px; height:180px; background:#222; position:relative;">
+                <div id="barM" style="position:absolute; bottom:0; width:100%; height:0%; background:#0f0;"></div>
+                <div class="loudTgt" style="position:absolute; left:-3px; right:-3px; height:1px; background:#fff;"></div>
+            </div>
+            <div style="width:20px; height:180px; background:#222; position:relative;">
+                <div id="barS" style="position:absolute; bottom:0; width:100%; height:0%; background:#0f0;"></div>
+                <div class="loudTgt" style="position:absolute; left:-3px; right:-3px; height:1px; background:#fff;"></div>
+            </div>
+        </div>
+
+        <div style="font-size:11px; color:#aaa; font-variant-numeric:tabular-nums; white-space:pre; width:170px; text-align:center;" id="msVal">M --.-  S --.-</div>
+
+        <div style="display:flex; gap:6px;">
+            <button id="lkfsStart" class="pbtn">START</button>
+            <button id="lkfsReset" class="pbtn">RESET</button>
+        </div>
+    </div>
+
+</div>
+        </div>
+    
+    
+    
+<div class="rta-panel">
+
+    <div style="display:flex; align-items:center; gap:20px;">
+        <div class="label" id="rtaLabel" style="width:190px; text-align:right;">RTA</div>
+        <button id="rtaToggle" class="pbtn wide">LOUDNESS表示へ</button>
+    </div>
+
+    <div class="rta-window">
+        <canvas id="rtaCanvas"
+                width="760"
+                height="260"></canvas>
+    </div>
+
+</div>
+
+
+
+    
+   
+   
+</div>
+
+<script>
+    function fitScreen(){
+
+    const panel =
+        document.getElementById("mainPanel");
+
+    panel.style.transform = "scale(1)";
+
+    const rect =
+        panel.getBoundingClientRect();
+
+    const scaleX =
+        window.innerWidth / rect.width;
+
+    const scaleY =
+        window.innerHeight / rect.height;
+
+    const scale =
+        Math.min(scaleX, scaleY) * 0.85;
+
+    panel.style.transform =
+        `scale(${scale})`;
+}
+
+window.addEventListener("resize", fitScreen);
+window.addEventListener("load", fitScreen);
+// Wake Lock 関連の処理
+let wakeLock = null;
+const requestWakeLock = async () => {
+    try {
+        if ('wakeLock' in navigator) {
+            wakeLock = await navigator.wakeLock.request('screen');
+        }
+    } catch (err) {}
+};
+
+// 初回操作時に Wake Lock を有効にする
+document.body.addEventListener('pointerdown', () => { 
+    if (!wakeLock) requestWakeLock(); 
+}, { once: true });
+
+document.addEventListener('visibilitychange', () => {
+    if (wakeLock !== null && document.visibilityState === 'visible') requestWakeLock();
+});
+
+const VU_W = 280, VU_H = 150, CX = 140, CY = 170, R_BASE = 125;
+const START_DEG = 145, END_DEG = 35;
+const V_MIN = Math.pow(10, -20/20), V_MAX = Math.pow(10, 3/20);
+
+// ===== 目盛り円弧の平たさ =====
+// 円弧の中心を、針の軸からどれだけ下げるか(px)。
+// 0 で今までと同じ同心円。大きくするほど平たくなる。
+const ARC_DROP = 60;
+
+// 振り切り位置で、針の軸から円弧までの距離(px)。
+// 針の長さは145。145に近づけるほど、両端で針先と円弧が近づく。
+const ARC_END = 135;
+
+// 円弧の半径：両端(振り切り位置)が ARC_END の場所を通るように決める
+const ARC_R = (() => {
+    const a = START_DEG * Math.PI / 180;
+    return Math.hypot(
+        Math.cos(a) * ARC_END,
+        Math.sin(a) * ARC_END + ARC_DROP
+    );
+})();
+
+// 針の軸から、その角度の方向にある円弧までの距離
+function arcDist(rad){
+    const uy = Math.sin(rad);
+    return ARC_DROP * uy +
+        Math.sqrt(ARC_R * ARC_R - ARC_DROP * ARC_DROP * (1 - uy * uy));
+}
+
+function dbToAngle(db){
+    const v = Math.pow(10, db/20);
+    const norm = (v - V_MIN)/(V_MAX - V_MIN);
+    return START_DEG + (norm * (END_DEG - START_DEG));
+}
+
+function drawVUBase(canvasId) {
+    const ctx = document.getElementById(canvasId).getContext("2d");
+    ctx.clearRect(0, 0, VU_W, VU_H);
+    const mainMarks = [-20, -10, -7, -5, -3, -2, -1, 0, 1, 2, 3];
+    for(let v = -20; v <= 3; v += 0.25) {
+        const rad = (-dbToAngle(v)) * Math.PI / 180;
+        const r = arcDist(rad);
+        const isRed = (v >= 0);
+        const isMain = mainMarks.includes(v);
+        ctx.beginPath();
+        ctx.strokeStyle = isRed ? "#d00" : "#222";
+        ctx.lineWidth = isMain ? 2.5 : 0.8;
+        let tLen = isMain ? (isRed ? 15 : 10) : 5;
+        ctx.moveTo(CX + Math.cos(rad) * r, CY + Math.sin(rad) * r);
+        ctx.lineTo(CX + Math.cos(rad) * (r + tLen), CY + Math.sin(rad) * (r + tLen));
+        ctx.stroke();
+        if ([-20, -10, -7, -5, -3, 0, 3].includes(v)) {
+            ctx.font = "bold 15px Arial"; ctx.fillStyle = isRed ? "#d00" : "#222"; ctx.textAlign = "center";
+            // 数字が窓からはみ出すときだけ、内側に寄せる(両端の数字用)
+            const half = ctx.measureText(Math.abs(v)).width / 2;
+            const lx = Math.max(4 + half, Math.min(VU_W - 4 - half, CX + Math.cos(rad)*(r+28)));
+            ctx.fillText(Math.abs(v), lx, CY + Math.sin(rad)*(r+28)+5);
+        }
+    }
+}
+drawVUBase("cvsL"); drawVUBase("cvsR");
+
+const micSelect = document.getElementById('micSelect');
+const btn = document.getElementById("btn");
+let audioCtx, stream, currentL = START_DEG, currentR = START_DEG;
+// ===== ラウドネス設定 =====
+const LOUD_TARGET = -24;            // 目標 (LKFS)。バーと履歴グラフに線を引く
+const LOUD_MIN = -50;               // バーと履歴グラフの下端 (LKFS)
+const LOUD_MAX = -10;               // バーと履歴グラフの上端 (LKFS)
+const LOUD_HIST_SEC = 30;           // 履歴グラフに残す秒数
+
+// 色の変わり目 [LKFS, [R,G,B]]。バーの高さ方向のグラデーションになる
+// いちばん下の色は、それより下ぜんぶに使う
+const LOUD_COLORS = [
+    [-30, [  0, 210,  90]],   // 緑 (ここから下は緑)
+    [-23, [240, 210,   0]],   // 黄
+    [-18, [255,  45,  30]]    // 赤 (ここから上は赤)
+];
+
+// 色の変わり目を、表示範囲の中の位置(0〜1)に直す
+function loudStops(){
+    return LOUD_COLORS.map(c => [
+        Math.max(0, Math.min(1, (c[0] - LOUD_MIN) / (LOUD_MAX - LOUD_MIN))),
+        `rgb(${c[1]})`
+    ]);
+}
+
+// K特性フィルター (ITU-R BS.1770)。サンプルレートに合わせて係数を作る
+class LoudBiquad {
+    constructor(b, a){
+        this.b0 = b[0]; this.b1 = b[1]; this.b2 = b[2];
+        this.a1 = a[0]; this.a2 = a[1];
+        this.x1 = this.x2 = this.y1 = this.y2 = 0;
+    }
+    run(x){
+        const y = this.b0 * x + this.b1 * this.x1 + this.b2 * this.x2
+                - this.a1 * this.y1 - this.a2 * this.y2;
+        this.x2 = this.x1; this.x1 = x;
+        this.y2 = this.y1; this.y1 = y;
+        return y;
+    }
+}
+
+function makeKWeight(rate){
+    // 高域シェルフ
+    let K = Math.tan(Math.PI * 1681.974450955533 / rate);
+    let Q = 0.7071752369554196;
+    const Vh = Math.pow(10, 3.999843853973347 / 20);
+    const Vb = Math.pow(Vh, 0.4996667741545416);
+    let a0 = 1 + K / Q + K * K;
+    const shelf = {
+        b: [(Vh + Vb * K / Q + K * K) / a0, 2 * (K * K - Vh) / a0, (Vh - Vb * K / Q + K * K) / a0],
+        a: [2 * (K * K - 1) / a0, (1 - K / Q + K * K) / a0]
+    };
+    // 低域カット
+    K = Math.tan(Math.PI * 38.13547087602444 / rate);
+    Q = 0.5003270373238773;
+    a0 = 1 + K / Q + K * K;
+    const hp = {
+        b: [1, -2, 1],
+        a: [2 * (K * K - 1) / a0, (1 - K / Q + K * K) / a0]
+    };
+    return { shelf, hp };
+}
+
+function toLkfs(e){
+    return e > 0 ? -0.691 + 10 * Math.log10(e) : -120;
+}
+
+let loudM = -120, loudS = -120;     // いまのM / S
+let loudI = null;                   // 積算値 (STARTを押すまで null)
+let loudRun = false;                // 積算中かどうか
+let loudRunBlocks = 0;
+const loudRing = [];                // 100msごとのパワー。直近3秒分だけ持つ
+const loudHist = [];                // 履歴グラフ用のS。直近30秒分だけ持つ
+
+// 積算用のレベル別集計表 (-70 〜 +10 LKFS を 0.1 刻み)。大きさは固定
+const GATE_BINS = 800;
+const gateCnt = new Float64Array(GATE_BINS);
+const gateSum = new Float64Array(GATE_BINS);
+
+function loudReset(){
+    gateCnt.fill(0);
+    gateSum.fill(0);
+    loudI = null;
+    loudRunBlocks = 0;
+}
+
+// 400msブロックを1個、積算に加える
+function loudAddBlock(e){
+    const l = toLkfs(e);
+    if (l <= -70) return;                               // 絶対ゲート
+    const idx = Math.min(GATE_BINS - 1, Math.floor((l + 70) * 10));
+    gateCnt[idx]++;
+    gateSum[idx] += e;
+
+    let n = 0, s = 0;
+    for (let i = 0; i < GATE_BINS; i++) { n += gateCnt[i]; s += gateSum[i]; }
+    if (!n) return;
+
+    const rel = toLkfs(s / n) - 10;                     // 相対ゲート
+    const from = Math.max(0, Math.ceil((rel + 70) * 10 - 1e-9));
+    n = 0; s = 0;
+    for (let i = from; i < GATE_BINS; i++) { n += gateCnt[i]; s += gateSum[i]; }
+    if (n) loudI = toLkfs(s / n);
+}
+
+// 100msぶんのパワー(L+R)を受け取る
+function loudPush(e){
+    loudRing.push(e);
+    if (loudRing.length > 30) loudRing.shift();
+
+    const len = loudRing.length;
+    let s4 = 0, s30 = 0;
+    for (let i = 0; i < len; i++) {
+        s30 += loudRing[i];
+        if (i >= len - 4) s4 += loudRing[i];
+    }
+    loudM = toLkfs(s4 / Math.min(4, len));
+    loudS = toLkfs(s30 / len);
+
+    loudHist.push(loudS);
+    if (loudHist.length > LOUD_HIST_SEC * 10) loudHist.shift();
+
+    if (loudRun && ++loudRunBlocks >= 4) loudAddBlock(s4 / 4);
+}
+
+// 履歴グラフ (RTAの枠に描く)
+let rtaMode = "rta";
+
+function drawLoudHistory(){
+    const cv = document.getElementById("rtaCanvas");
+    const g = cv.getContext("2d");
+    const x0 = 40, x1 = cv.width - 10, yTop = 10, yBot = 220;
+    const yOf = v => yBot - (v - LOUD_MIN) / (LOUD_MAX - LOUD_MIN) * (yBot - yTop);
+
+    g.fillStyle = "#050505";
+    g.fillRect(0, 0, cv.width, cv.height);
+
+    g.font = "12px sans-serif";
+    g.lineWidth = 1;
+    g.textAlign = "right";
+    for (let v = LOUD_MIN; v <= LOUD_MAX; v += 10) {
+        g.strokeStyle = "rgba(255,255,255,0.12)";
+        g.beginPath(); g.moveTo(x0, yOf(v)); g.lineTo(x1, yOf(v)); g.stroke();
+        g.fillStyle = "#aaa";
+        g.fillText(v, x0 - 6, yOf(v) + 4);
+    }
+
+    const n = LOUD_HIST_SEC * 10;
+    const bw = (x1 - x0) / n;
+    const grad = g.createLinearGradient(0, yBot, 0, yTop);
+    loudStops().forEach(st => grad.addColorStop(st[0], st[1]));
+    g.fillStyle = grad;
+    for (let k = 0; k < loudHist.length; k++) {
+        const v = Math.min(LOUD_MAX, loudHist[k]);
+        if (v <= LOUD_MIN) continue;
+        const x = x1 - (loudHist.length - k) * bw;
+        g.fillRect(x, yOf(v), bw + 0.5, yBot - yOf(v));
+    }
+
+    // 目標の線
+    g.strokeStyle = "rgba(255,255,255,0.8)";
+    g.beginPath(); g.moveTo(x0, yOf(LOUD_TARGET)); g.lineTo(x1, yOf(LOUD_TARGET)); g.stroke();
+    g.fillStyle = "#fff";
+    g.fillText(LOUD_TARGET, x0 - 6, yOf(LOUD_TARGET) + 4);
+
+    g.fillStyle = "#aaa";
+    g.textAlign = "center";
+    for (let t = 0; t <= LOUD_HIST_SEC; t += 10) {
+        g.fillText(t === 0 ? "0" : "-" + t + "s", x1 - t * 10 * bw, 245);
+    }
+}
+
+document.getElementById("rtaToggle").onclick = () => {
+    rtaMode = rtaMode === "rta" ? "loud" : "rta";
+    document.getElementById("rtaLabel").innerText =
+        rtaMode === "rta" ? "RTA" : "LOUDNESS (S) " + LOUD_HIST_SEC + "s";
+    document.getElementById("rtaToggle").innerText =
+        rtaMode === "rta" ? "LOUDNESS表示へ" : "RTA表示へ";
+};
+
+// M/Sバーの色。枠の高さに固定したグラデーションを、バーの高さぶんだけ見せる
+["barM", "barS"].forEach(id => {
+    const el = document.getElementById(id);
+    el.style.background =
+        "linear-gradient(to top, " +
+        loudStops().map(st => st[1] + " " + (st[0] * 100) + "%").join(", ") +
+        ") bottom / 100% " + el.parentElement.style.height + " no-repeat";
+});
+
+// バーの目標線の位置
+document.querySelectorAll(".loudTgt").forEach(el => {
+    el.style.bottom =
+        (LOUD_TARGET - LOUD_MIN) / (LOUD_MAX - LOUD_MIN) * 100 + "%";
+});
+
+// START / STOP / RESET
+document.getElementById("lkfsStart").onclick = () => {
+    loudRun = !loudRun;
+    loudRunBlocks = 0;
+    document.getElementById("lkfsStart").innerText = loudRun ? "STOP" : "START";
+    document.getElementById("lkfsStart").classList.toggle("on", loudRun);
+};
+document.getElementById("lkfsReset").onclick = loudReset;
+
+
+async function getDevices() {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    micSelect.innerHTML = '';
+    devices.filter(d => d.kind === 'audioinput').forEach(d => {
+        const opt = document.createElement('option');
+        opt.value = d.deviceId;
+        opt.text = d.label || `Microphone ${micSelect.length + 1}`;
+        micSelect.appendChild(opt);
+    });
+}
+
+navigator.mediaDevices.getUserMedia({ audio: true }).then(s => {
+    s.getTracks().forEach(t => t.stop());
+    getDevices();
+});
+
+btn.onclick = async () => {
+    if (audioCtx) { audioCtx.close(); audioCtx = null; btn.innerText = "POWER OFF"; btn.classList.remove("on"); return; }
+    
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    
+    const constraints = { 
+        audio: { 
+            deviceId: micSelect.value ? { exact: micSelect.value } : undefined,
+            channelCount: { exact: 2 }, 
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false
+        } 
+    };
+    
+    try {
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+    } catch(e) {
+        console.log("ステレオ強制リトライ");
+        constraints.audio.channelCount = { ideal: 2 };
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+    }
+    
+    btn.innerText = "POWER ON"; btn.classList.add("on");
+    
+    const src = audioCtx.createMediaStreamSource(stream);
+    const splitter = audioCtx.createChannelSplitter(2);
+    const anaL = audioCtx.createAnalyser(), anaR = audioCtx.createAnalyser();
+    const gainNode = audioCtx.createGain();
+    const rtaAnalyser = audioCtx.createAnalyser();
+
+// ===== RTA設定 =====
+const RTA_BANDS_PER_OCT = 6;   // 1オクターブあたりのバー数 (3 / 6 / 12)
+const RTA_TOP = 0;             // 表示の上端 (dBFS)
+const RTA_BOTTOM = -80;        // 表示の下端 (dBFS)
+const RTA_ATTACK = 0.05;       // 上がる速さ (秒)
+const RTA_RELEASE = 0.3;       // 下がる速さ (秒)
+const RTA_SPLIT_HZ = 250;      // これより下のバンドは低域用の大きいFFTで測る
+
+rtaAnalyser.fftSize = 8192;            // 高域用（反応が速い）
+rtaAnalyser.smoothingTimeConstant = 0;
+
+const rtaAnalyserLow = audioCtx.createAnalyser();
+rtaAnalyserLow.fftSize = 32768;        // 低域用（周波数が細かい）
+rtaAnalyserLow.smoothingTimeConstant = 0;
+
+const rtaData =
+    new Float32Array(rtaAnalyser.frequencyBinCount);
+
+const rtaDataLow =
+    new Float32Array(rtaAnalyserLow.frequencyBinCount);
+
+const rtaCanvas =
+    document.getElementById("rtaCanvas");
+
+const rtaCtx =
+    rtaCanvas.getContext("2d");
+
+// バンド表（1kHz基準で等間隔に並べる）
+const rtaBandList = [];
+{
+    const n = RTA_BANDS_PER_OCT;
+    const kMin = Math.round(n * Math.log2(20 / 1000));
+    const kMax = Math.round(n * Math.log2(20000 / 1000));
+    const half = Math.pow(2, 1 / (2 * n));
+    for (let k = kMin; k <= kMax; k++) {
+        const fc = 1000 * Math.pow(2, k / n);
+        rtaBandList.push({ fc: fc, f1: fc / half, f2: fc * half, p: 0 });
+    }
+}
+
+// 窓関数(Blackman)の補正。フルスケールのサイン波が -3dBFS(RMS) になる
+const RTA_NORM = 2 / 0.3046;
+
+// f1〜f2 に入るパワーを合算する（端のbinは重なった分だけ足す）
+function rtaBandPower(data, fftSize, f1, f2){
+    const binHz = audioCtx.sampleRate / fftSize;
+    const lo = f1 / binHz, hi = f2 / binHz;
+    const iEnd = Math.min(data.length - 1, Math.floor(hi + 0.5));
+    let p = 0;
+    for (let i = Math.max(1, Math.floor(lo + 0.5)); i <= iEnd; i++) {
+        const w = Math.min(hi, i + 0.5) - Math.max(lo, i - 0.5);
+        if (w > 0) p += Math.pow(10, data[i] / 10) * w;
+    }
+    return p * RTA_NORM;
+}
+
+let rtaLastT = performance.now();
+    
+    anaL.fftSize = anaR.fftSize = 1024;
+    src.connect(gainNode);
+gainNode.gain.value = 1;
+
+gainNode.connect(splitter);
+gainNode.connect(rtaAnalyser);
+gainNode.connect(rtaAnalyserLow);
+
+// ===== ラウドネス測定 (VU GAINのあとの信号で測る) =====
+const kw = makeKWeight(audioCtx.sampleRate);
+const kShL = new LoudBiquad(kw.shelf.b, kw.shelf.a), kShR = new LoudBiquad(kw.shelf.b, kw.shelf.a);
+const kHpL = new LoudBiquad(kw.hp.b, kw.hp.a),       kHpR = new LoudBiquad(kw.hp.b, kw.hp.a);
+const loudSubN = Math.round(audioCtx.sampleRate * 0.1);   // 100ms
+let loudSubSum = 0, loudSubCnt = 0;
+loudRing.length = 0;
+loudRunBlocks = 0;
+
+const loudProc = audioCtx.createScriptProcessor(2048, 2, 1);
+loudProc.channelInterpretation = "discrete";   // モノラル入力はLだけに入れる(VUと同じ扱い)
+loudProc.onaudioprocess = e => {
+    const L = e.inputBuffer.getChannelData(0);
+    const R = e.inputBuffer.getChannelData(1);
+    for (let i = 0; i < L.length; i++) {
+        const l = kHpL.run(kShL.run(L[i]));
+        const r = kHpR.run(kShR.run(R[i]));
+        loudSubSum += l * l + r * r;
+        if (++loudSubCnt >= loudSubN) {
+            loudPush(loudSubSum / loudSubCnt);
+            loudSubSum = 0;
+            loudSubCnt = 0;
+        }
+    }
+};
+gainNode.connect(loudProc);
+loudProc.connect(audioCtx.destination);   // 動かすためにつなぐ。音は出さない
+    splitter.connect(anaL, 0); splitter.connect(anaR, 1);
+
+    const bufL = new Float32Array(1024), bufR = new Float32Array(1024);
+    const scopeCtx = document.getElementById("cvsScope").getContext("2d");
+    
+    const vuWin = Math.floor(audioCtx.sampleRate * 0.135), vuBufL = [], vuBufR = [];
+
+    let lastX = 110, lastY = 110;
+
+    function loop() {
+        if (!audioCtx) return;
+        const coarse = parseFloat(document.getElementById("vuGainCoarse").value);
+const fine   = parseFloat(document.getElementById("vuGainFine").value);
+const sG     = parseFloat(document.getElementById("scopeGain").value);
+
+// 合算
+const totalDb = (coarse - 20) + fine;
+
+// ゲイン反映
+gainNode.gain.value = Math.pow(10, totalDb / 20);
+
+// 表示
+document.getElementById("vuVal").innerText =
+  (totalDb >= 0 ? "+" : "") + totalDb.toFixed(1) + " dB";
+        document.getElementById("scopeVal").innerText = "x" + sG.toFixed(1);
+
+        anaL.getFloatTimeDomainData(bufL); anaR.getFloatTimeDomainData(bufR);
+        
+
+const getRMS = (b, vBuf) => {
+    for(let i=0; i<b.length; i++) vBuf.push(Math.abs(b[i]));
+    while(vBuf.length > vuWin) vBuf.shift();
+    return vBuf.reduce((a,b)=>a+b,0)/vBuf.length;
+};
+
+
+     
+        
+        const targetL = dbToAngle(Math.max(-20, Math.min(3, 20 * Math.log10(getRMS(bufL, vuBufL) || 0.00001) + 23.8)));
+        const targetR = dbToAngle(Math.max(-20, Math.min(3, 20 * Math.log10(getRMS(bufR, vuBufR) || 0.00001) + 23.8)));
+
+        currentL += (targetL - currentL) * 0.145;
+        currentR += (targetR - currentR) * 0.145;
+        
+        document.getElementById("ndlL").style.transform = `rotate(${90-currentL}deg)`;
+        document.getElementById("ndlR").style.transform = `rotate(${90-currentR}deg)`;
+
+        scopeCtx.fillStyle = "rgba(0, 10, 0, 0.18)"; scopeCtx.fillRect(0, 0, 220, 220);
+        scopeCtx.strokeStyle = "#1a3a1a"; scopeCtx.beginPath(); scopeCtx.moveTo(110, 0); scopeCtx.lineTo(110, 220); scopeCtx.moveTo(0, 110); scopeCtx.lineTo(220, 110); scopeCtx.stroke();
+        scopeCtx.beginPath(); scopeCtx.strokeStyle = "#00ff66"; scopeCtx.lineWidth = 1.2;
+        
+        for(let i=0; i<bufL.length; i+=2) {
+            const rawX = (bufR[i] - bufL[i]) * sG * 40 + 110;
+            const rawY = 110 - (bufL[i] + bufR[i]) * sG * 40;
+            const targetX = lastX + (rawX - lastX) * 0.4;
+            const targetY = lastY + (rawY - lastY) * 0.4;
+            if(i===0) scopeCtx.moveTo(targetX, targetY); else scopeCtx.lineTo(targetX, targetY);
+            lastX = targetX;
+            lastY = targetY;
+        }
+        scopeCtx.stroke();
+const loudPct = v => Math.max(0, Math.min(100,
+    (v - LOUD_MIN) / (LOUD_MAX - LOUD_MIN) * 100));
+const loudFmt = v => v < -99 ? "--.-" : v.toFixed(1);
+
+const barM = document.getElementById("barM");
+const barS = document.getElementById("barS");
+barM.style.height = loudPct(loudM) + "%";
+barS.style.height = loudPct(loudS) + "%";
+
+document.getElementById("lkfsVal").innerText =
+    (loudI === null ? "--.-" : loudI.toFixed(1)) + " LKFS";
+document.getElementById("msVal").innerText =
+    "M " + loudFmt(loudM) + "  S " + loudFmt(loudS);
+
+
+        // ===== RTA描画 =====
+
+if (rtaMode === "loud") {
+    drawLoudHistory();
+    requestAnimationFrame(loop);
+    return;
+}
+
+rtaAnalyser.getFloatFrequencyData(rtaData);
+rtaAnalyserLow.getFloatFrequencyData(rtaDataLow);
+
+rtaCtx.clearRect(
+    0,
+    0,
+    rtaCanvas.width,
+    rtaCanvas.height
+);
+
+
+// 背景
+rtaCtx.fillStyle = "#050505";
+rtaCtx.fillRect(
+    0,
+    0,
+    rtaCanvas.width,
+    rtaCanvas.height
+);
+
+
+// ガイド線
+const guide = [
+    {f:100,  strong:true},
+    {f:200,  strong:false},
+    {f:500,  strong:false},
+    {f:1000, strong:true},
+    {f:2000, strong:false},
+    {f:5000, strong:false},
+    {f:10000,strong:true}
+];
+
+function freqX(freq){
+
+    const min = 20;
+    const max = 20000;
+
+    return 30 +
+       Math.log10(freq/min) /
+       Math.log10(max/min) *
+       (rtaCanvas.width - 60);
+}
+
+
+guide.forEach(g=>{
+
+    rtaCtx.beginPath();
+
+    rtaCtx.strokeStyle =
+        g.strong ?
+        "rgba(255,255,255,0.25)" :
+        "rgba(255,255,255,0.12)";
+
+    rtaCtx.moveTo(
+        freqX(g.f),
+        0
+    );
+
+    rtaCtx.lineTo(
+        freqX(g.f),
+        220
+    );
+
+    rtaCtx.stroke();
+
+});
+
+
+// バー描画（バンド内のパワー合算。ピンクノイズで平らになる）
+
+const rtaNow = performance.now();
+const rtaDt = Math.min(0.1, (rtaNow - rtaLastT) / 1000);
+rtaLastT = rtaNow;
+
+const rtaStep =
+    (rtaCanvas.width - 60) / (Math.log2(1000) * RTA_BANDS_PER_OCT);
+const rtaBarW = Math.max(1, rtaStep * 0.8);
+
+rtaCtx.fillStyle = "#777";
+
+for (const band of rtaBandList) {
+
+    const p = band.fc < RTA_SPLIT_HZ ?
+        rtaBandPower(rtaDataLow, rtaAnalyserLow.fftSize, band.f1, band.f2) :
+        rtaBandPower(rtaData, rtaAnalyser.fftSize, band.f1, band.f2);
+
+    // 上がりは速く、下がりはゆっくり（画面の更新速度に左右されない）
+    const tau = p > band.p ? RTA_ATTACK : RTA_RELEASE;
+    band.p += (p - band.p) * (1 - Math.exp(-rtaDt / tau));
+
+    const db = 10 * Math.log10(band.p + 1e-12);
+
+    const h = Math.max(0, Math.min(220,
+        (db - RTA_BOTTOM) / (RTA_TOP - RTA_BOTTOM) * 220));
+
+    rtaCtx.fillRect(
+        freqX(band.fc) - rtaBarW / 2,
+        220 - h,
+        rtaBarW,
+        h
+    );
+}
+
+
+// 周波数表示
+
+rtaCtx.fillStyle="#aaa";
+rtaCtx.font="12px sans-serif";
+rtaCtx.textAlign="center";
+
+
+
+[
+20,
+50,
+100,
+200,
+315,
+500,
+1000,
+2000,
+3150,
+5000,
+10000,
+20000
+].forEach(f=>{
+
+    let label = f;
+
+if(f === 1000) label = "1k";
+if(f === 2000) label = "2k";
+if(f === 3150) label = "3.15k";
+if(f === 5000) label = "5k";
+if(f === 10000) label = "10k";
+if(f === 20000) label = "20k";
+
+rtaCtx.fillText(
+    label,
+    freqX(f),
+    245
+);
+
+});
+        requestAnimationFrame(loop);
+    }
+    loop();
+};
+</script>
+    </div>
+</body>
+</html>
