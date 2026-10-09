@@ -86,6 +86,11 @@ canvas { position: absolute; top: 0; left: 0; z-index: 5; }
 .pbtn:active{ background:#1c1c1c; }
 .pbtn.on{ background:#0a7a3c; border-color:#16c060; color:#fff; }
 .pbtn.wide{ width:150px; }
+#vuVal, #scopeVal{
+    color:#888;
+    font-size:12px;
+    font-variant-numeric:tabular-nums;
+}
 #mainPanel{
     transform-origin: top center;
 }
@@ -329,9 +334,13 @@ const LOUD_HIST_SEC = 30;           // 履歴グラフに残す秒数
 // 色の変わり目 [LKFS, [R,G,B]]。バーの高さ方向のグラデーションになる
 // いちばん下の色は、それより下ぜんぶに使う
 const LOUD_COLORS = [
-    [-30, [  0, 210,  90]],   // 緑 (ここから下は緑)
-    [-23, [240, 210,   0]],   // 黄
-    [-18, [255,  45,  30]]    // 赤 (ここから上は赤)
+    [-49, [ 45, 125, 150]],   // 緑よりの青 (ここから下はこの色)
+    [-43, [ 55, 165,  95]],   // 緑
+    [-35, [ 85, 175,  85]],   // 緑 (ここまで緑を保つ)
+    [-28, [150, 195,  60]],   // 黄緑
+    [-24, [232, 202,  45]],   // 黄 (目標のあたり)
+    [-19, [236, 170,  45]],   // 黄よりのオレンジ
+    [-14, [222,  58,  42]]    // 赤 (ここから上は赤)
 ];
 
 // 色の変わり目を、表示範囲の中の位置(0〜1)に直す
@@ -671,8 +680,20 @@ loudProc.connect(audioCtx.destination);   // 動かすためにつなぐ。音�
 
     let lastX = 110, lastY = 110;
 
-    function loop() {
+    // ===== 針の動きを画面の更新速度に左右されないようにする =====
+    // 60Hzの画面での動きを基準にして、経過時間ぶんだけ進める
+    const VU_REF_FPS = 60;      // 針の動きを合わせ込んだ画面の更新速度
+    const VU_SMOOTH = 0.145;    // 基準の画面で、1回の描画ごとに針が進む割合
+    let vuLastT = null, vuCarry = 0;
+
+    function loop(ts) {
         if (!audioCtx) return;
+
+        const vuNow = ts === undefined ? performance.now() : ts;
+        // 基準の画面で何回ぶんの描画にあたるか (60Hzなら1、120Hzなら0.5)
+        const vuFrames = vuLastT === null ? 1 :
+            Math.max(0, Math.min(6, (vuNow - vuLastT) / 1000 * VU_REF_FPS));
+        vuLastT = vuNow;
         const coarse = parseFloat(document.getElementById("vuGainCoarse").value);
 const fine   = parseFloat(document.getElementById("vuGainFine").value);
 const sG     = parseFloat(document.getElementById("scopeGain").value);
@@ -691,10 +712,15 @@ document.getElementById("vuVal").innerText =
         anaL.getFloatTimeDomainData(bufL); anaR.getFloatTimeDomainData(bufR);
         
 
+// 平均の箱に入れるサンプル数を、経過時間に比例させる
+vuCarry += bufL.length * vuFrames;
+const vuN = Math.min(bufL.length, Math.floor(vuCarry));
+vuCarry -= Math.floor(vuCarry);
+
 const getRMS = (b, vBuf) => {
-    for(let i=0; i<b.length; i++) vBuf.push(Math.abs(b[i]));
-    while(vBuf.length > vuWin) vBuf.shift();
-    return vBuf.reduce((a,b)=>a+b,0)/vBuf.length;
+    for(let i=b.length-vuN; i<b.length; i++) vBuf.push(Math.abs(b[i]));
+    if(vBuf.length > vuWin) vBuf.splice(0, vBuf.length - vuWin);
+    return vBuf.length ? vBuf.reduce((a,b)=>a+b,0)/vBuf.length : 0;
 };
 
 
@@ -703,8 +729,9 @@ const getRMS = (b, vBuf) => {
         const targetL = dbToAngle(Math.max(-20, Math.min(3, 20 * Math.log10(getRMS(bufL, vuBufL) || 0.00001) + 23.8)));
         const targetR = dbToAngle(Math.max(-20, Math.min(3, 20 * Math.log10(getRMS(bufR, vuBufR) || 0.00001) + 23.8)));
 
-        currentL += (targetL - currentL) * 0.145;
-        currentR += (targetR - currentR) * 0.145;
+        const vuK = 1 - Math.pow(1 - VU_SMOOTH, vuFrames);
+        currentL += (targetL - currentL) * vuK;
+        currentR += (targetR - currentR) * vuK;
         
         document.getElementById("ndlL").style.transform = `rotate(${90-currentL}deg)`;
         document.getElementById("ndlR").style.transform = `rotate(${90-currentR}deg)`;
