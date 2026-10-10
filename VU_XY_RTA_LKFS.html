@@ -86,6 +86,10 @@ canvas { position: absolute; top: 0; left: 0; z-index: 5; }
 .pbtn:active{ background:#1c1c1c; }
 .pbtn.on{ background:#0a7a3c; border-color:#16c060; color:#fff; }
 .pbtn.tab{ width:120px; }
+.loudCol{ display:flex; flex-direction:column; align-items:center; gap:6px; width:52px; }
+.loudName{ font-size:12px; color:#aaa; }
+.loudNum{ font-size:15px; color:#ccc; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.loudTrack{ width:20px; height:220px; background:#222; position:relative; }
 #vuVal, #scopeVal{
     color:#888;
     font-size:12px;
@@ -161,30 +165,26 @@ canvas { position: absolute; top: 0; left: 0; z-index: 5; }
 
     </div>
 
-    <div class="unit" style="width:170px;">
+    <div class="unit" style="width:112px;">
         <div class="label">LOUDNESS</div>
 
-        <div style="color:#0f0; margin-top:5px; font-size:20px; font-weight:bold; font-variant-numeric:tabular-nums; width:170px; text-align:center; white-space:nowrap;" id="lkfsVal">--.- LKFS</div>
-        <div style="font-size:11px; color:#aaa;">INTEGRATED</div>
-
-        <div style="font-size:12px; color:#aaa;">M　　S</div>
-
-        <div style="display:flex; gap:10px; align-items:flex-end;">
-            <div style="width:20px; height:180px; background:#222; position:relative;">
-                <div id="barM" style="position:absolute; bottom:0; width:100%; height:0%; background:#0f0;"></div>
-                <div class="loudTgt" style="position:absolute; left:-3px; right:-3px; height:1px; background:#fff;"></div>
+        <div style="display:flex; gap:4px; align-items:flex-end;">
+            <div class="loudCol">
+                <div class="loudName">M</div>
+                <div class="loudTrack" style="height:220px;">
+                    <div id="barM" style="position:absolute; bottom:0; width:100%; height:0%;"></div>
+                    <div class="loudTgt" style="position:absolute; left:-3px; right:-3px; height:1px; background:#fff;"></div>
+                </div>
+                <div class="loudNum" id="mVal">--.-</div>
             </div>
-            <div style="width:20px; height:180px; background:#222; position:relative;">
-                <div id="barS" style="position:absolute; bottom:0; width:100%; height:0%; background:#0f0;"></div>
-                <div class="loudTgt" style="position:absolute; left:-3px; right:-3px; height:1px; background:#fff;"></div>
+            <div class="loudCol">
+                <div class="loudName">S</div>
+                <div class="loudTrack" style="height:220px;">
+                    <div id="barS" style="position:absolute; bottom:0; width:100%; height:0%;"></div>
+                    <div class="loudTgt" style="position:absolute; left:-3px; right:-3px; height:1px; background:#fff;"></div>
+                </div>
+                <div class="loudNum" id="sVal">--.-</div>
             </div>
-        </div>
-
-        <div style="font-size:11px; color:#aaa; font-variant-numeric:tabular-nums; white-space:pre; width:170px; text-align:center;" id="msVal">M --.-  S --.-</div>
-
-        <div style="display:flex; gap:6px;">
-            <button id="lkfsStart" class="pbtn">START</button>
-            <button id="lkfsReset" class="pbtn">RESET</button>
         </div>
     </div>
 
@@ -195,9 +195,17 @@ canvas { position: absolute; top: 0; left: 0; z-index: 5; }
     
 <div class="rta-panel">
 
-    <div style="display:flex; align-items:center; gap:8px;">
+    <div style="display:flex; align-items:center; gap:8px; width:760px;">
         <button id="tabRta" class="pbtn tab on">RTA</button>
         <button id="tabLoud" class="pbtn tab">LOUDNESS</button>
+        <div style="flex:1;"></div>
+        <div style="width:290px; text-align:right; white-space:nowrap; color:#0f0; line-height:1;">
+            <span style="font-size:12px; color:#aaa; margin-right:6px;">INTEGRATED</span><span id="lkfsVal" style="font-size:50px; font-weight:bold; font-variant-numeric:tabular-nums;">--.-</span><span style="font-size:18px;"> LKFS</span>
+        </div>
+        <div style="display:flex; gap:6px; margin-left:10px;">
+            <button id="lkfsStart" class="pbtn">START</button>
+            <button id="lkfsReset" class="pbtn">RESET</button>
+        </div>
     </div>
 
     <div class="rta-window">
@@ -233,7 +241,7 @@ canvas { position: absolute; top: 0; left: 0; z-index: 5; }
         window.innerHeight / rect.height;
 
     const scale =
-        Math.min(scaleX, scaleY) * 0.85;
+        Math.min(scaleX, scaleY) * 0.97;
 
     panel.style.transform =
         `scale(${scale})`;
@@ -720,9 +728,27 @@ gainNode.connect(loudProc);
 loudProc.connect(audioCtx.destination);   // 動かすためにつなぐ。音は出さない
     splitter.connect(anaL, 0); splitter.connect(anaR, 1);
 
+    // ===== フェーズスコープ用 =====
+    // 音の経路の中で先に L+R (縦) と R-L (横) を作ってから読む。
+    // L と R が同じなら R-L は必ず 0 になるので、モノラルが一瞬広がって見えることがない
+    const SCOPE_POINTS = 128;   // 1回に描く点の数
+    const SCOPE_FPS = 30;       // 1秒に描く回数
+    const SCOPE_FADE = 0.18;    // 残像の消える速さ (大きいほど速く消える)
+    const scopeMid = audioCtx.createGain(), scopeSide = audioCtx.createGain();
+    const scopeInvL = audioCtx.createGain();
+    scopeInvL.gain.value = -1;
+    splitter.connect(scopeMid, 0);  splitter.connect(scopeMid, 1);     // L + R
+    splitter.connect(scopeSide, 1); splitter.connect(scopeInvL, 0);    // R - L
+    scopeInvL.connect(scopeSide);
+    const anaMid = audioCtx.createAnalyser(), anaSide = audioCtx.createAnalyser();
+    anaMid.fftSize = anaSide.fftSize = 256;
+    scopeMid.connect(anaMid); scopeSide.connect(anaSide);
+    const bufMid = new Float32Array(256), bufSide = new Float32Array(256);
+    let scopeLastT = 0;
+
     const bufL = new Float32Array(2048), bufR = new Float32Array(2048);
     const VU_SNAP = 1024;                     // 基準の画面で、1回の描画ごとに使うサンプル数
-    const scope0 = bufL.length - VU_SNAP;     // スコープは新しいほうの1024個を描く
+
     const scopeCtx = document.getElementById("cvsScope").getContext("2d");
     
     const vuWin = Math.floor(audioCtx.sampleRate * 0.135);
@@ -804,20 +830,27 @@ vuCarry -= Math.floor(vuCarry);
         document.getElementById("ndlL").style.transform = `rotate(${90-currentL}deg)`;
         document.getElementById("ndlR").style.transform = `rotate(${90-currentR}deg)`;
 
-        scopeCtx.fillStyle = "rgba(0, 10, 0, 0.18)"; scopeCtx.fillRect(0, 0, 220, 220);
-        scopeCtx.strokeStyle = "#1a3a1a"; scopeCtx.beginPath(); scopeCtx.moveTo(110, 0); scopeCtx.lineTo(110, 220); scopeCtx.moveTo(0, 110); scopeCtx.lineTo(220, 110); scopeCtx.stroke();
-        scopeCtx.beginPath(); scopeCtx.strokeStyle = "#00ff66"; scopeCtx.lineWidth = 1.2;
-        
-        for(let i=scope0; i<bufL.length; i+=2) {
-            const rawX = (bufR[i] - bufL[i]) * sG * 40 + 110;
-            const rawY = 110 - (bufL[i] + bufR[i]) * sG * 40;
-            const targetX = lastX + (rawX - lastX) * 0.4;
-            const targetY = lastY + (rawY - lastY) * 0.4;
-            if(i===scope0) scopeCtx.moveTo(targetX, targetY); else scopeCtx.lineTo(targetX, targetY);
-            lastX = targetX;
-            lastY = targetY;
+        if (vuNow - scopeLastT >= 1000 / SCOPE_FPS * 0.85) {
+            scopeLastT = vuNow;
+            anaMid.getFloatTimeDomainData(bufMid);
+            anaSide.getFloatTimeDomainData(bufSide);
+
+            scopeCtx.fillStyle = "rgba(0, 10, 0, " + SCOPE_FADE + ")"; scopeCtx.fillRect(0, 0, 220, 220);
+            scopeCtx.strokeStyle = "#1a3a1a"; scopeCtx.lineWidth = 1; scopeCtx.beginPath(); scopeCtx.moveTo(110, 0); scopeCtx.lineTo(110, 220); scopeCtx.moveTo(0, 110); scopeCtx.lineTo(220, 110); scopeCtx.stroke();
+            scopeCtx.beginPath(); scopeCtx.strokeStyle = "#00ff66"; scopeCtx.lineWidth = 1.2;
+
+            const scopeStart = bufMid.length - Math.min(bufMid.length, SCOPE_POINTS * 2);
+            for(let i=scopeStart; i<bufMid.length; i+=2) {
+                const rawX = bufSide[i] * sG * 40 + 110;
+                const rawY = 110 - bufMid[i] * sG * 40;
+                const targetX = lastX + (rawX - lastX) * 0.4;
+                const targetY = lastY + (rawY - lastY) * 0.4;
+                if(i===scopeStart) scopeCtx.moveTo(targetX, targetY); else scopeCtx.lineTo(targetX, targetY);
+                lastX = targetX;
+                lastY = targetY;
+            }
+            scopeCtx.stroke();
         }
-        scopeCtx.stroke();
 const loudPct = v => Math.max(0, Math.min(100,
     (v - LOUD_MIN) / (LOUD_MAX - LOUD_MIN) * 100));
 const loudFmt = v => v < -99 ? "--.-" : v.toFixed(1);
@@ -827,8 +860,9 @@ const barS = document.getElementById("barS");
 barM.style.height = loudPct(loudM) + "%";
 barS.style.height = loudPct(loudS) + "%";
 
-setText("lkfsVal", (loudI === null ? "--.-" : loudI.toFixed(1)) + " LKFS");
-setText("msVal", "M " + loudFmt(loudM) + "  S " + loudFmt(loudS));
+setText("lkfsVal", loudI === null ? "--.-" : loudI.toFixed(1));
+setText("mVal", loudFmt(loudM));
+setText("sVal", loudFmt(loudS));
 
 
         // ===== RTA描画 =====
