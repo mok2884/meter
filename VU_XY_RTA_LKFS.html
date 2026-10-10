@@ -733,6 +733,7 @@ loudProc.connect(audioCtx.destination);   // 動かすためにつなぐ。音�
     // L と R が同じなら R-L は必ず 0 になるので、モノラルが一瞬広がって見えることがない
     const SCOPE_POINTS = 512;   // 1回に描く点の数
     const SCOPE_FPS = 60;       // 1秒に描く回数
+    const SCOPE_SCALE = 160;    // 倍率x1.0のときの大きさ (以前は40。4倍にした)
     const SCOPE_FADE = 0.18;    // 残像の消える速さ (大きいほど速く消える)
     const scopeMid = audioCtx.createGain(), scopeSide = audioCtx.createGain();
     const scopeInvL = audioCtx.createGain();
@@ -841,8 +842,8 @@ vuCarry -= Math.floor(vuCarry);
 
             const scopeStart = bufMid.length - Math.min(bufMid.length, SCOPE_POINTS * 2);
             for(let i=scopeStart; i<bufMid.length; i+=2) {
-                const rawX = bufSide[i] * sG * 40 + 110;
-                const rawY = 110 - bufMid[i] * sG * 40;
+                const rawX = bufSide[i] * sG * SCOPE_SCALE + 110;
+                const rawY = 110 - bufMid[i] * sG * SCOPE_SCALE;
                 const targetX = lastX + (rawX - lastX) * 0.4;
                 const targetY = lastY + (rawY - lastY) * 0.4;
                 if(i===scopeStart) scopeCtx.moveTo(targetX, targetY); else scopeCtx.lineTo(targetX, targetY);
