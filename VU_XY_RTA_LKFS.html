@@ -731,7 +731,9 @@ loudProc.connect(audioCtx.destination);   // 動かすためにつなぐ。音�
     // ===== フェーズスコープ用 =====
     // 音の経路の中で先に L+R (縦) と R-L (横) を作ってから読む。
     // L と R が同じなら R-L は必ず 0 になるので、モノラルが一瞬広がって見えることがない
-    const SCOPE_POINTS = 512;   // 1回に描く点の数
+    const SCOPE_POINTS = 1024;  // 1回に打つ点の数 (音のサンプル1個につき1点)
+    const SCOPE_DOT = 1.5;      // 点の大きさ (px)
+    const SCOPE_DOT_ALPHA = 0.4;// 点の濃さ (0〜1)。重なった場所ほど明るくなる
     const SCOPE_FPS = 60;       // 1秒に描く回数
     const SCOPE_SCALE = 160;    // 倍率x1.0のときの大きさ (以前は40。4倍にした)
     const SCOPE_FADE = 0.18;    // 残像の消える速さ (大きいほど速く消える)
@@ -774,7 +776,6 @@ loudProc.connect(audioCtx.destination);   // 動かすためにつなぐ。音�
         return a.n ? Math.max(0, a.sum / a.n) : 0;
     }
 
-    let lastX = 110, lastY = 110;
 
     // ===== 針の動きを画面の更新速度に左右されないようにする =====
     // 60Hzの画面での動きを基準にして、経過時間ぶんだけ進める
@@ -838,19 +839,17 @@ vuCarry -= Math.floor(vuCarry);
 
             scopeCtx.fillStyle = "rgba(0, 10, 0, " + SCOPE_FADE + ")"; scopeCtx.fillRect(0, 0, 220, 220);
             scopeCtx.strokeStyle = "#1a3a1a"; scopeCtx.lineWidth = 1; scopeCtx.beginPath(); scopeCtx.moveTo(110, 0); scopeCtx.lineTo(110, 220); scopeCtx.moveTo(0, 110); scopeCtx.lineTo(220, 110); scopeCtx.stroke();
-            scopeCtx.beginPath(); scopeCtx.strokeStyle = "#00ff66"; scopeCtx.lineWidth = 1.2;
-
-            const scopeStart = bufMid.length - Math.min(bufMid.length, SCOPE_POINTS * 2);
-            for(let i=scopeStart; i<bufMid.length; i+=2) {
-                const rawX = bufSide[i] * sG * SCOPE_SCALE + 110;
-                const rawY = 110 - bufMid[i] * sG * SCOPE_SCALE;
-                const targetX = lastX + (rawX - lastX) * 0.4;
-                const targetY = lastY + (rawY - lastY) * 0.4;
-                if(i===scopeStart) scopeCtx.moveTo(targetX, targetY); else scopeCtx.lineTo(targetX, targetY);
-                lastX = targetX;
-                lastY = targetY;
+            // 線でつながず、サンプルごとに点を打つ。
+            // なめらかな音は点が詰まって線に見え、複雑な音は点がばらけて雲に見える
+            scopeCtx.fillStyle = "rgba(0, 255, 102, " + SCOPE_DOT_ALPHA + ")";
+            const scopeStart = bufMid.length - Math.min(bufMid.length, SCOPE_POINTS);
+            const scopeK = sG * SCOPE_SCALE, scopeH = SCOPE_DOT / 2;
+            for(let i=scopeStart; i<bufMid.length; i++) {
+                scopeCtx.fillRect(
+                    110 + bufSide[i] * scopeK - scopeH,
+                    110 - bufMid[i] * scopeK - scopeH,
+                    SCOPE_DOT, SCOPE_DOT);
             }
-            scopeCtx.stroke();
         }
 const loudPct = v => Math.max(0, Math.min(100,
     (v - LOUD_MIN) / (LOUD_MAX - LOUD_MIN) * 100));
