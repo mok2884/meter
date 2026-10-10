@@ -473,7 +473,7 @@ let rtaMode = "rta";
 function drawLoudHistory(){
     const cv = document.getElementById("rtaCanvas");
     const g = cv.getContext("2d");
-    const pitch = 3;     // バー1本の横幅(px)。2px描いて1pxあける
+    const pitch = 3;     // 3秒ぶんの横幅(px)
     const x1 = cv.width - 10, x0 = x1 - LOUD_HIST_BARS * pitch;
     const yTop = 10, yBot = 220;
     const yOf = v => yBot - (v - LOUD_MIN) / (LOUD_MAX - LOUD_MIN) * (yBot - yTop);
@@ -495,17 +495,28 @@ function drawLoudHistory(){
     loudStops().forEach(st => grad.addColorStop(st[0], st[1]));
     g.fillStyle = grad;
 
-    // slot 0 が右端。左へ行くほど古い
-    const bar = (slot, v) => {
-        v = Math.min(LOUD_MAX, v);
-        if (v <= LOUD_MIN) return;
-        const y = Math.round(yOf(v));
-        g.fillRect(x1 - (slot + 1) * pitch, y, pitch - 1, yBot - y);
-    };
-    bar(0, loudS);                                   // 進行中の1本 (リアルタイム)
-    for (let k = 0; k < loudHist.length; k++) {      // 確定したバー
-        bar(loudHist.length - k, loudHist[k]);
+    // 3秒ごとの値を点にして、なめらかな曲線でつなぎ、その下を塗る
+    // 右端が進行中の値 (リアルタイム)。左へ行くほど古い
+    const vals = loudHist.concat([loudS]);
+    const pts = vals.map((v, k) => ({
+        x: x1 - (vals.length - 1 - k + 0.5) * pitch,
+        y: yOf(Math.max(LOUD_MIN, Math.min(LOUD_MAX, v)))
+    }));
+    g.beginPath();
+    g.moveTo(pts[0].x, yBot);
+    g.lineTo(pts[0].x, pts[0].y);
+    for (let k = 1; k < pts.length; k++) {
+        // 点と点の中間を通る曲線にすると、角が立たない
+        const mx = (pts[k - 1].x + pts[k].x) / 2;
+        const my = (pts[k - 1].y + pts[k].y) / 2;
+        g.quadraticCurveTo(pts[k - 1].x, pts[k - 1].y, mx, my);
     }
+    const last = pts[pts.length - 1];
+    g.lineTo(last.x, last.y);
+    g.lineTo(x1, last.y);
+    g.lineTo(x1, yBot);
+    g.closePath();
+    g.fill();
 
     // 目標の線
     g.strokeStyle = "rgba(255,255,255,0.8)";
