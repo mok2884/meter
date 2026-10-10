@@ -85,7 +85,7 @@ canvas { position: absolute; top: 0; left: 0; z-index: 5; }
 .pbtn:hover{ background:#383838; border-color:#777; }
 .pbtn:active{ background:#1c1c1c; }
 .pbtn.on{ background:#0a7a3c; border-color:#16c060; color:#fff; }
-.pbtn.wide{ width:150px; }
+.pbtn.tab{ width:120px; }
 #vuVal, #scopeVal{
     color:#888;
     font-size:12px;
@@ -195,9 +195,9 @@ canvas { position: absolute; top: 0; left: 0; z-index: 5; }
     
 <div class="rta-panel">
 
-    <div style="display:flex; align-items:center; gap:20px;">
-        <div class="label" id="rtaLabel" style="width:190px; text-align:right;">RTA</div>
-        <button id="rtaToggle" class="pbtn wide">LOUDNESS表示へ</button>
+    <div style="display:flex; align-items:center; gap:8px;">
+        <button id="tabRta" class="pbtn tab on">RTA</button>
+        <button id="tabLoud" class="pbtn tab">LOUDNESS</button>
     </div>
 
     <div class="rta-window">
@@ -329,7 +329,9 @@ let audioCtx, stream, currentL = START_DEG, currentR = START_DEG;
 const LOUD_TARGET = -24;            // 目標 (LKFS)。バーと履歴グラフに線を引く
 const LOUD_MIN = -50;               // バーと履歴グラフの下端 (LKFS)
 const LOUD_MAX = -10;               // バーと履歴グラフの上端 (LKFS)
-const LOUD_HIST_SEC = 30;           // 履歴グラフに残す秒数
+const LOUD_BAR_SEC = 3;              // 履歴グラフのバー1本の秒数
+const LOUD_HIST_MIN = 12;            // 履歴グラフ全体の長さ (分)
+const LOUD_HIST_BARS = LOUD_HIST_MIN * 60 / LOUD_BAR_SEC;   // バーの本数
 
 // 色の変わり目 [LKFS, [R,G,B]]。バーの高さ方向のグラデーションになる
 // いちばん下の色は、それより下ぜんぶに使う
@@ -398,7 +400,16 @@ let loudI = null;                   // 積算値 (STARTを押すまで null)
 let loudRun = false;                // 積算中かどうか
 let loudRunBlocks = 0;
 const loudRing = [];                // 100msごとのパワー。直近3秒分だけ持つ
-const loudHist = [];                // 履歴グラフ用のS。直近30秒分だけ持つ
+const loudHist = [];                // 履歴グラフ用。確定したバーの値だけ持つ
+let loudHistCnt = 0;                // 進行中のバーが何個ぶんの100msを数えたか
+let loudDirty = true;               // 履歴グラフを描き直す必要があるか
+
+// 文字が変わったときだけ画面を書き換える (毎回書き換えると無駄に重い)
+const textCache = {};
+function setText(id, str){
+    const c = textCache[id] || (textCache[id] = { el: document.getElementById(id), last: null });
+    if (c.last !== str) { c.last = str; c.el.innerText = str; }
+}
 
 // 積算用のレベル別集計表 (-70 〜 +10 LKFS を 0.1 刻み)。大きさは固定
 const GATE_BINS = 800;
@@ -445,8 +456,13 @@ function loudPush(e){
     loudM = toLkfs(s4 / Math.min(4, len));
     loudS = toLkfs(s30 / len);
 
-    loudHist.push(loudS);
-    if (loudHist.length > LOUD_HIST_SEC * 10) loudHist.shift();
+    // 3秒たったら、その3秒ぶんの値をバー1本として確定する
+    if (++loudHistCnt >= LOUD_BAR_SEC * 10) {
+        loudHistCnt = 0;
+        loudHist.push(loudS);
+        if (loudHist.length > LOUD_HIST_BARS - 1) loudHist.shift();
+    }
+    loudDirty = true;
 
     if (loudRun && ++loudRunBlocks >= 4) loudAddBlock(s4 / 4);
 }
@@ -457,7 +473,9 @@ let rtaMode = "rta";
 function drawLoudHistory(){
     const cv = document.getElementById("rtaCanvas");
     const g = cv.getContext("2d");
-    const x0 = 40, x1 = cv.width - 10, yTop = 10, yBot = 220;
+    const pitch = 3;     // バー1本の横幅(px)。2px描いて1pxあける
+    const x1 = cv.width - 10, x0 = x1 - LOUD_HIST_BARS * pitch;
+    const yTop = 10, yBot = 220;
     const yOf = v => yBot - (v - LOUD_MIN) / (LOUD_MAX - LOUD_MIN) * (yBot - yTop);
 
     g.fillStyle = "#050505";
@@ -473,16 +491,20 @@ function drawLoudHistory(){
         g.fillText(v, x0 - 6, yOf(v) + 4);
     }
 
-    const n = LOUD_HIST_SEC * 10;
-    const bw = (x1 - x0) / n;
     const grad = g.createLinearGradient(0, yBot, 0, yTop);
     loudStops().forEach(st => grad.addColorStop(st[0], st[1]));
     g.fillStyle = grad;
-    for (let k = 0; k < loudHist.length; k++) {
-        const v = Math.min(LOUD_MAX, loudHist[k]);
-        if (v <= LOUD_MIN) continue;
-        const x = x1 - (loudHist.length - k) * bw;
-        g.fillRect(x, yOf(v), bw + 0.5, yBot - yOf(v));
+
+    // slot 0 が右端。左へ行くほど古い
+    const bar = (slot, v) => {
+        v = Math.min(LOUD_MAX, v);
+        if (v <= LOUD_MIN) return;
+        const y = Math.round(yOf(v));
+        g.fillRect(x1 - (slot + 1) * pitch, y, pitch - 1, yBot - y);
+    };
+    bar(0, loudS);                                   // 進行中の1本 (リアルタイム)
+    for (let k = 0; k < loudHist.length; k++) {      // 確定したバー
+        bar(loudHist.length - k, loudHist[k]);
     }
 
     // 目標の線
@@ -493,18 +515,27 @@ function drawLoudHistory(){
 
     g.fillStyle = "#aaa";
     g.textAlign = "center";
-    for (let t = 0; t <= LOUD_HIST_SEC; t += 10) {
-        g.fillText(t === 0 ? "0" : "-" + t + "s", x1 - t * 10 * bw, 245);
+    for (let m = 0; m <= LOUD_HIST_MIN; m += 3) {
+        g.fillText(m === 0 ? "0" : "-" + m + "分",
+            x1 - m * 60 / LOUD_BAR_SEC * pitch, 245);
     }
 }
 
-document.getElementById("rtaToggle").onclick = () => {
-    rtaMode = rtaMode === "rta" ? "loud" : "rta";
-    document.getElementById("rtaLabel").innerText =
-        rtaMode === "rta" ? "RTA" : "LOUDNESS (S) " + LOUD_HIST_SEC + "s";
-    document.getElementById("rtaToggle").innerText =
-        rtaMode === "rta" ? "LOUDNESS表示へ" : "RTA表示へ";
-};
+// RTA / LOUDNESS の切り替え。選んでいるほうのボタンが光る
+function setRtaMode(mode){
+    rtaMode = mode;
+    document.getElementById("tabRta").classList.toggle("on", mode === "rta");
+    document.getElementById("tabLoud").classList.toggle("on", mode === "loud");
+    loudDirty = true;
+    if (mode === "loud") {
+        drawLoudHistory();
+    } else if (!audioCtx) {
+        const cv = document.getElementById("rtaCanvas");
+        cv.getContext("2d").clearRect(0, 0, cv.width, cv.height);
+    }
+}
+document.getElementById("tabRta").onclick = () => setRtaMode("rta");
+document.getElementById("tabLoud").onclick = () => setRtaMode("loud");
 
 // M/Sバーの色。枠の高さに固定したグラデーションを、バーの高さぶんだけ見せる
 ["barM", "barS"].forEach(id => {
@@ -614,7 +645,7 @@ const rtaBandList = [];
     const half = Math.pow(2, 1 / (2 * n));
     for (let k = kMin; k <= kMax; k++) {
         const fc = 1000 * Math.pow(2, k / n);
-        rtaBandList.push({ fc: fc, f1: fc / half, f2: fc * half, p: 0 });
+        rtaBandList.push({ fc: fc, f1: fc / half, f2: fc * half, p: 0, raw: 0 });
     }
 }
 
@@ -635,8 +666,13 @@ function rtaBandPower(data, fftSize, f1, f2){
 }
 
 let rtaLastT = performance.now();
+
+// 解析をやり直す間隔 (ミリ秒)。描画のたびにやる必要はない
+const RTA_HI_MS = 30;     // 高域用：1秒に約30回
+const RTA_LO_MS = 100;    // 低域用：1秒に約10回
+let rtaHiT = 0, rtaLoT = 0;
     
-    anaL.fftSize = anaR.fftSize = 1024;
+    anaL.fftSize = anaR.fftSize = 2048;
     src.connect(gainNode);
 gainNode.gain.value = 1;
 
@@ -673,10 +709,32 @@ gainNode.connect(loudProc);
 loudProc.connect(audioCtx.destination);   // 動かすためにつなぐ。音は出さない
     splitter.connect(anaL, 0); splitter.connect(anaR, 1);
 
-    const bufL = new Float32Array(1024), bufR = new Float32Array(1024);
+    const bufL = new Float32Array(2048), bufR = new Float32Array(2048);
+    const VU_SNAP = 1024;                     // 基準の画面で、1回の描画ごとに使うサンプル数
+    const scope0 = bufL.length - VU_SNAP;     // スコープは新しいほうの1024個を描く
     const scopeCtx = document.getElementById("cvsScope").getContext("2d");
     
-    const vuWin = Math.floor(audioCtx.sampleRate * 0.135), vuBufL = [], vuBufR = [];
+    const vuWin = Math.floor(audioCtx.sampleRate * 0.135);
+
+    // VUの平均。直近 vuWin 個の平均を、出入りした分だけ足し引きして求める
+    const makeVuAvg = () => ({ buf: new Float32Array(vuWin), pos: 0, n: 0, sum: 0, tick: 0 });
+    const vuAvgL = makeVuAvg(), vuAvgR = makeVuAvg();
+    function vuAvgPush(a, src, count){
+        for (let i = src.length - count; i < src.length; i++) {
+            if (a.n < vuWin) a.n++; else a.sum -= a.buf[a.pos];
+            a.buf[a.pos] = Math.abs(src[i]);
+            a.sum += a.buf[a.pos];
+            if (++a.pos >= vuWin) a.pos = 0;
+        }
+        // ときどき足し直して、細かい誤差がたまらないようにする
+        if (++a.tick >= 600) {
+            a.tick = 0;
+            let t = 0;
+            for (let i = 0; i < a.n; i++) t += a.buf[i];
+            a.sum = t;
+        }
+        return a.n ? Math.max(0, a.sum / a.n) : 0;
+    }
 
     let lastX = 110, lastY = 110;
 
@@ -685,12 +743,18 @@ loudProc.connect(audioCtx.destination);   // 動かすためにつなぐ。音�
     const VU_REF_FPS = 60;      // 針の動きを合わせ込んだ画面の更新速度
     const VU_SMOOTH = 0.145;    // 基準の画面で、1回の描画ごとに針が進む割合
     let vuLastT = null, vuCarry = 0;
+    const MAX_FPS = 60;         // 描画の上限 (1秒あたりの回数)
 
     function loop(ts) {
         if (!audioCtx) return;
 
         const vuNow = ts === undefined ? performance.now() : ts;
-        // 基準の画面で何回ぶんの描画にあたるか (60Hzなら1、120Hzなら0.5)
+        // 前の描画から時間がたっていなければ、今回は何もしない (120Hzの画面で半分に間引く)
+        if (vuLastT !== null && vuNow - vuLastT < 1000 / MAX_FPS * 0.85) {
+            requestAnimationFrame(loop);
+            return;
+        }
+        // 基準の画面で何回ぶんの描画にあたるか (60Hzなら1)
         const vuFrames = vuLastT === null ? 1 :
             Math.max(0, Math.min(6, (vuNow - vuLastT) / 1000 * VU_REF_FPS));
         vuLastT = vuNow;
@@ -705,29 +769,22 @@ const totalDb = (coarse - 20) + fine;
 gainNode.gain.value = Math.pow(10, totalDb / 20);
 
 // 表示
-document.getElementById("vuVal").innerText =
-  (totalDb >= 0 ? "+" : "") + totalDb.toFixed(1) + " dB";
-        document.getElementById("scopeVal").innerText = "x" + sG.toFixed(1);
+setText("vuVal", (totalDb >= 0 ? "+" : "") + totalDb.toFixed(1) + " dB");
+        setText("scopeVal", "x" + sG.toFixed(1));
 
         anaL.getFloatTimeDomainData(bufL); anaR.getFloatTimeDomainData(bufR);
         
 
 // 平均の箱に入れるサンプル数を、経過時間に比例させる
-vuCarry += bufL.length * vuFrames;
+vuCarry += VU_SNAP * vuFrames;
 const vuN = Math.min(bufL.length, Math.floor(vuCarry));
 vuCarry -= Math.floor(vuCarry);
-
-const getRMS = (b, vBuf) => {
-    for(let i=b.length-vuN; i<b.length; i++) vBuf.push(Math.abs(b[i]));
-    if(vBuf.length > vuWin) vBuf.splice(0, vBuf.length - vuWin);
-    return vBuf.length ? vBuf.reduce((a,b)=>a+b,0)/vBuf.length : 0;
-};
 
 
      
         
-        const targetL = dbToAngle(Math.max(-20, Math.min(3, 20 * Math.log10(getRMS(bufL, vuBufL) || 0.00001) + 23.8)));
-        const targetR = dbToAngle(Math.max(-20, Math.min(3, 20 * Math.log10(getRMS(bufR, vuBufR) || 0.00001) + 23.8)));
+        const targetL = dbToAngle(Math.max(-20, Math.min(3, 20 * Math.log10(vuAvgPush(vuAvgL, bufL, vuN) || 0.00001) + 23.8)));
+        const targetR = dbToAngle(Math.max(-20, Math.min(3, 20 * Math.log10(vuAvgPush(vuAvgR, bufR, vuN) || 0.00001) + 23.8)));
 
         const vuK = 1 - Math.pow(1 - VU_SMOOTH, vuFrames);
         currentL += (targetL - currentL) * vuK;
@@ -740,12 +797,12 @@ const getRMS = (b, vBuf) => {
         scopeCtx.strokeStyle = "#1a3a1a"; scopeCtx.beginPath(); scopeCtx.moveTo(110, 0); scopeCtx.lineTo(110, 220); scopeCtx.moveTo(0, 110); scopeCtx.lineTo(220, 110); scopeCtx.stroke();
         scopeCtx.beginPath(); scopeCtx.strokeStyle = "#00ff66"; scopeCtx.lineWidth = 1.2;
         
-        for(let i=0; i<bufL.length; i+=2) {
+        for(let i=scope0; i<bufL.length; i+=2) {
             const rawX = (bufR[i] - bufL[i]) * sG * 40 + 110;
             const rawY = 110 - (bufL[i] + bufR[i]) * sG * 40;
             const targetX = lastX + (rawX - lastX) * 0.4;
             const targetY = lastY + (rawY - lastY) * 0.4;
-            if(i===0) scopeCtx.moveTo(targetX, targetY); else scopeCtx.lineTo(targetX, targetY);
+            if(i===scope0) scopeCtx.moveTo(targetX, targetY); else scopeCtx.lineTo(targetX, targetY);
             lastX = targetX;
             lastY = targetY;
         }
@@ -759,22 +816,24 @@ const barS = document.getElementById("barS");
 barM.style.height = loudPct(loudM) + "%";
 barS.style.height = loudPct(loudS) + "%";
 
-document.getElementById("lkfsVal").innerText =
-    (loudI === null ? "--.-" : loudI.toFixed(1)) + " LKFS";
-document.getElementById("msVal").innerText =
-    "M " + loudFmt(loudM) + "  S " + loudFmt(loudS);
+setText("lkfsVal", (loudI === null ? "--.-" : loudI.toFixed(1)) + " LKFS");
+setText("msVal", "M " + loudFmt(loudM) + "  S " + loudFmt(loudS));
 
 
         // ===== RTA描画 =====
 
 if (rtaMode === "loud") {
-    drawLoudHistory();
+    if (loudDirty) { loudDirty = false; drawLoudHistory(); }   // 値が変わったときだけ描く
     requestAnimationFrame(loop);
     return;
 }
 
-rtaAnalyser.getFloatFrequencyData(rtaData);
-rtaAnalyserLow.getFloatFrequencyData(rtaDataLow);
+// 解析は決めた間隔でだけやり直す
+const rtaNow = performance.now();
+const rtaHiNew = rtaNow - rtaHiT >= RTA_HI_MS;
+const rtaLoNew = rtaNow - rtaLoT >= RTA_LO_MS;
+if (rtaHiNew) { rtaHiT = rtaNow; rtaAnalyser.getFloatFrequencyData(rtaData); }
+if (rtaLoNew) { rtaLoT = rtaNow; rtaAnalyserLow.getFloatFrequencyData(rtaDataLow); }
 
 rtaCtx.clearRect(
     0,
@@ -795,15 +854,13 @@ rtaCtx.fillRect(
 
 
 // ガイド線
-const guide = [
-    {f:100,  strong:true},
-    {f:200,  strong:false},
-    {f:500,  strong:false},
-    {f:1000, strong:true},
-    {f:2000, strong:false},
-    {f:5000, strong:false},
-    {f:10000,strong:true}
+// 数字とガイド線はオクターブごと。バーの位置にぴったり合わせる
+const rtaSnap = f => 1000 * Math.pow(2, Math.round(3 * Math.log2(f / 1000)) / 3);
+const rtaLabels = [
+    [20, "20"], [31.5, "31.5"], [63, "63"], [125, "125"], [250, "250"], [500, "500"],
+    [1000, "1k"], [2000, "2k"], [4000, "4k"], [8000, "8k"], [16000, "16k"]
 ];
+const guide = rtaLabels.slice(1).map(l => ({ f: rtaSnap(l[0]), strong: l[0] === 1000 }));
 
 function freqX(freq){
 
@@ -843,7 +900,6 @@ guide.forEach(g=>{
 
 // バー描画（バンド内のパワー合算。ピンクノイズで平らになる）
 
-const rtaNow = performance.now();
 const rtaDt = Math.min(0.1, (rtaNow - rtaLastT) / 1000);
 rtaLastT = rtaNow;
 
@@ -855,9 +911,13 @@ rtaCtx.fillStyle = "#777";
 
 for (const band of rtaBandList) {
 
-    const p = band.fc < RTA_SPLIT_HZ ?
-        rtaBandPower(rtaDataLow, rtaAnalyserLow.fftSize, band.f1, band.f2) :
-        rtaBandPower(rtaData, rtaAnalyser.fftSize, band.f1, band.f2);
+    const isLow = band.fc < RTA_SPLIT_HZ;
+    if (isLow ? rtaLoNew : rtaHiNew) {
+        band.raw = isLow ?
+            rtaBandPower(rtaDataLow, rtaAnalyserLow.fftSize, band.f1, band.f2) :
+            rtaBandPower(rtaData, rtaAnalyser.fftSize, band.f1, band.f2);
+    }
+    const p = band.raw;
 
     // 上がりは速く、下がりはゆっくり（画面の更新速度に左右されない）
     const tau = p > band.p ? RTA_ATTACK : RTA_RELEASE;
@@ -885,36 +945,19 @@ rtaCtx.textAlign="center";
 
 
 
-[
-20,
-50,
-100,
-200,
-315,
-500,
-1000,
-2000,
-3150,
-5000,
-10000,
-20000
-].forEach(f=>{
+// 1/3オクターブごとの小さい目盛り (オクターブの位置は長め)
+rtaCtx.strokeStyle = "rgba(255,255,255,0.4)";
+rtaCtx.lineWidth = 1;
+rtaCtx.beginPath();
+for (let k = -17; k <= 13; k++) {
+    const x = Math.round(freqX(1000 * Math.pow(2, k / 3))) + 0.5;
+    rtaCtx.moveTo(x, 221);
+    rtaCtx.lineTo(x, k % 3 === 0 ? 229 : 225);
+}
+rtaCtx.stroke();
 
-    let label = f;
-
-if(f === 1000) label = "1k";
-if(f === 2000) label = "2k";
-if(f === 3150) label = "3.15k";
-if(f === 5000) label = "5k";
-if(f === 10000) label = "10k";
-if(f === 20000) label = "20k";
-
-rtaCtx.fillText(
-    label,
-    freqX(f),
-    245
-);
-
+rtaLabels.forEach(l => {
+    rtaCtx.fillText(l[1], freqX(rtaSnap(l[0])), 245);
 });
         requestAnimationFrame(loop);
     }
