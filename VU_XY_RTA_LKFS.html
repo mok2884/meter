@@ -241,7 +241,7 @@ canvas { position: absolute; top: 0; left: 0; z-index: 5; }
         window.innerHeight / rect.height;
 
     const scale =
-        Math.min(scaleX, scaleY) * 0.97;
+        Math.min(scaleX, scaleY) * 0.85;
 
     panel.style.transform =
         `scale(${scale})`;
@@ -731,8 +731,8 @@ loudProc.connect(audioCtx.destination);   // 動かすためにつなぐ。音�
     // ===== フェーズスコープ用 =====
     // 音の経路の中で先に L+R (縦) と R-L (横) を作ってから読む。
     // L と R が同じなら R-L は必ず 0 になるので、モノラルが一瞬広がって見えることがない
-    const SCOPE_POINTS = 128;   // 1回に描く点の数
-    const SCOPE_FPS = 30;       // 1秒に描く回数
+    const SCOPE_POINTS = 512;   // 1回に描く点の数
+    const SCOPE_FPS = 60;       // 1秒に描く回数
     const SCOPE_FADE = 0.18;    // 残像の消える速さ (大きいほど速く消える)
     const scopeMid = audioCtx.createGain(), scopeSide = audioCtx.createGain();
     const scopeInvL = audioCtx.createGain();
@@ -741,9 +741,9 @@ loudProc.connect(audioCtx.destination);   // 動かすためにつなぐ。音�
     splitter.connect(scopeSide, 1); splitter.connect(scopeInvL, 0);    // R - L
     scopeInvL.connect(scopeSide);
     const anaMid = audioCtx.createAnalyser(), anaSide = audioCtx.createAnalyser();
-    anaMid.fftSize = anaSide.fftSize = 256;
+    anaMid.fftSize = anaSide.fftSize = 1024;
     scopeMid.connect(anaMid); scopeSide.connect(anaSide);
-    const bufMid = new Float32Array(256), bufSide = new Float32Array(256);
+    const bufMid = new Float32Array(1024), bufSide = new Float32Array(1024);
     let scopeLastT = 0;
 
     const bufL = new Float32Array(2048), bufR = new Float32Array(2048);
