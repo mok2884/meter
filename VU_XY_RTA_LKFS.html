@@ -224,31 +224,44 @@ canvas { position: absolute; top: 0; left: 0; z-index: 5; }
 </div>
 
 <script>
-    function fitScreen(){
+const FIT_TOP = 20;        // 画面の上端とのあいだの余白 (px)
+const FIT_RATIO = 0.85;    // 画面に対する全体の大きさ (1で画面いっぱい)
+let fitW = 0;
+
+// 全体を画面に収まる大きさにする
+function fitScreen(){
 
     const panel =
         document.getElementById("mainPanel");
 
+    panel.style.marginTop = FIT_TOP + "px";
     panel.style.transform = "scale(1)";
 
     const rect =
         panel.getBoundingClientRect();
 
+    fitW = document.documentElement.clientWidth;
+
     const scaleX =
-        window.innerWidth / rect.width;
+        fitW / rect.width;
 
     const scaleY =
-        window.innerHeight / rect.height;
+        (window.innerHeight - FIT_TOP) / rect.height;
 
     const scale =
-        Math.min(scaleX, scaleY) * 0.85;
+        Math.min(scaleX, scaleY) * FIT_RATIO;
 
     panel.style.transform =
         `scale(${scale})`;
 }
 
-window.addEventListener("resize", fitScreen);
+// 合わせるのは、開いたときと、横幅が変わったとき(回転など)だけ。
+// アドレスバーの出入りや指での拡大では、高さしか変わらないので動かさない
 window.addEventListener("load", fitScreen);
+window.addEventListener("resize", () => {
+    if (document.documentElement.clientWidth !== fitW) fitScreen();
+});
+window.addEventListener("orientationchange", () => setTimeout(fitScreen, 300));
 // Wake Lock 関連の処理
 let wakeLock = null;
 const requestWakeLock = async () => {
