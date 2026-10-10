@@ -12,11 +12,11 @@ body { background-color: #050505; margin: 0; display: flex; flex-direction: colu
 .scope { position: relative; width: 220px; height: 220px; background-color: #000; border: 1px solid #444; border-radius: 4px; }
 .needle {
     position: absolute;
-    top: 170px;
+    top: 181px;
     left: 140px;
     width: 0;
-    height: 145px;
-    margin-top: -145px;
+    height: 155px;
+    margin-top: -155px;
     transform-origin: bottom center;
     z-index: 10;
 }
@@ -27,7 +27,7 @@ body { background-color: #050505; margin: 0; display: flex; flex-direction: colu
     left: -3px;
     bottom: 0;
     width: 6px;
-    height: 145px;
+    height: 155px;
     background: #111;
     clip-path: polygon(
         33% 0%,
@@ -121,6 +121,7 @@ canvas { position: absolute; top: 0; left: 0; z-index: 5; }
                 -- Device List --
             </option>
         </select>
+        <div id="latVal" style="font-size:11px; color:#888; height:14px; white-space:nowrap; font-variant-numeric:tabular-nums;"></div>
     </div>
 
 </div>
@@ -281,65 +282,69 @@ document.addEventListener('visibilitychange', () => {
     if (wakeLock !== null && document.visibilityState === 'visible') requestWakeLock();
 });
 
-const VU_W = 280, VU_H = 150, CX = 140, CY = 170, R_BASE = 125;
-const START_DEG = 145, END_DEG = 35;
-const V_MIN = Math.pow(10, -20/20), V_MAX = Math.pow(10, 3/20);
+// ===== VUの文字盤 (針の角度・軸・目盛りの位置は実機に合わせてある。見た目は独自) =====
+const VU_W = 280, VU_H = 150;
+const CX = 140, CY = 181;                 // 針の軸。窓の下端より31px下
+const START_DEG = 133, END_DEG = 47;      // 針が振れる範囲 (水平から測って左右とも47度)
+const VU_ARC_R = 140;                     // 目盛りの弧の半径 (針の軸と同じ中心)
+const VU_LABEL_R = 166;                   // 数字を置く半径
 
-// ===== 目盛り円弧の平たさ =====
-// 円弧の中心を、針の軸からどれだけ下げるか(px)。
-// 0 で今までと同じ同心円。大きくするほど平たくなる。
-const ARC_DROP = 60;
-
-// 振り切り位置で、針の軸から円弧までの距離(px)。
-// 針の長さは145。145に近づけるほど、両端で針先と円弧が近づく。
-const ARC_END = 135;
-
-// 円弧の半径：両端(振り切り位置)が ARC_END の場所を通るように決める
-const ARC_R = (() => {
-    const a = START_DEG * Math.PI / 180;
-    return Math.hypot(
-        Math.cos(a) * ARC_END,
-        Math.sin(a) * ARC_END + ARC_DROP
-    );
-})();
-
-// 針の軸から、その角度の方向にある円弧までの距離
-function arcDist(rad){
-    const uy = Math.sin(rad);
-    return ARC_DROP * uy +
-        Math.sqrt(ARC_R * ARC_R - ARC_DROP * ARC_DROP * (1 - uy * uy));
+// 各目盛りが、振れ幅全体のどこにあるか (0 = 音なしの位置、1 = +3)。写真から測った値
+const VU_SCALE = [
+    [-20, 0.030], [-10, 0.135], [-7, 0.222], [-5, 0.303], [-3, 0.418], [-2, 0.489],
+    [-1, 0.567], [0, 0.654], [1, 0.765], [2, 0.888], [3, 1.000]
+];
+// 電圧 → 振れ幅。目盛りと目盛りの間は直線でつなぐ
+const VU_PTS = [[0, 0]].concat(VU_SCALE.map(m => [Math.pow(10, m[0] / 20), m[1]]));
+function vuFrac(v){
+    if (!(v > 0)) return 0;
+    for (let i = 1; i < VU_PTS.length; i++) {
+        if (v <= VU_PTS[i][0]) {
+            const a = VU_PTS[i - 1], b = VU_PTS[i];
+            return a[1] + (b[1] - a[1]) * (v - a[0]) / (b[0] - a[0]);
+        }
+    }
+    return 1;
 }
-
 function dbToAngle(db){
-    const v = Math.pow(10, db/20);
-    const norm = (v - V_MIN)/(V_MAX - V_MIN);
-    return START_DEG + (norm * (END_DEG - START_DEG));
+    return START_DEG + vuFrac(Math.pow(10, db / 20)) * (END_DEG - START_DEG);
 }
 
 function drawVUBase(canvasId) {
     const ctx = document.getElementById(canvasId).getContext("2d");
     ctx.clearRect(0, 0, VU_W, VU_H);
-    const mainMarks = [-20, -10, -7, -5, -3, -2, -1, 0, 1, 2, 3];
-    for(let v = -20; v <= 3; v += 0.25) {
-        const rad = (-dbToAngle(v)) * Math.PI / 180;
-        const r = arcDist(rad);
-        const isRed = (v >= 0);
-        const isMain = mainMarks.includes(v);
-        ctx.beginPath();
-        ctx.strokeStyle = isRed ? "#d00" : "#222";
-        ctx.lineWidth = isMain ? 2.5 : 0.8;
-        let tLen = isMain ? (isRed ? 15 : 10) : 5;
-        ctx.moveTo(CX + Math.cos(rad) * r, CY + Math.sin(rad) * r);
-        ctx.lineTo(CX + Math.cos(rad) * (r + tLen), CY + Math.sin(rad) * (r + tLen));
-        ctx.stroke();
-        if ([-20, -10, -7, -5, -3, 0, 3].includes(v)) {
-            ctx.font = "bold 15px Arial"; ctx.fillStyle = isRed ? "#d00" : "#222"; ctx.textAlign = "center";
-            // 数字が窓からはみ出すときだけ、内側に寄せる(両端の数字用)
-            const half = ctx.measureText(Math.abs(v)).width / 2;
-            const lx = Math.max(4 + half, Math.min(VU_W - 4 - half, CX + Math.cos(rad)*(r+28)));
-            ctx.fillText(Math.abs(v), lx, CY + Math.sin(rad)*(r+28)+5);
-        }
-    }
+    const BLACK = "#222", RED = "#d00";
+    const rad = deg => -deg * Math.PI / 180;
+    const pt = (deg, r) => [CX + Math.cos(rad(deg)) * r, CY + Math.sin(rad(deg)) * r];
+
+    // 弧。音なしの位置〜0 は黒の細い線 (-20 より左にも少し伸びる)、0〜+3 は赤い帯
+    ctx.beginPath(); ctx.strokeStyle = BLACK; ctx.lineWidth = 1.5;
+    ctx.arc(CX, CY, VU_ARC_R, rad(START_DEG), rad(dbToAngle(0)));
+    ctx.stroke();
+    ctx.beginPath(); ctx.strokeStyle = RED; ctx.lineWidth = 5;
+    ctx.arc(CX, CY, VU_ARC_R + 2.5, rad(dbToAngle(0)), rad(dbToAngle(3)));
+    ctx.stroke();
+
+    // 目盛りと数字
+    ctx.font = "bold 15px Arial"; ctx.textAlign = "center";
+    VU_SCALE.forEach(m => {
+        const v = m[0], deg = dbToAngle(v), color = v >= 0 ? RED : BLACK;
+        const a = pt(deg, VU_ARC_R), b = pt(deg, VU_ARC_R + (v >= 0 ? 13 : 10));
+        ctx.beginPath(); ctx.strokeStyle = color; ctx.lineWidth = 2.2;
+        ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
+        const txt = String(Math.abs(v));
+        const t = pt(deg, VU_LABEL_R);
+        const half = ctx.measureText(txt).width / 2;
+        ctx.fillStyle = color;
+        ctx.fillText(txt, Math.max(4 + half, Math.min(VU_W - 4 - half, t[0])), t[1] + 5);
+    });
+
+    // − と ＋ と VU
+    ctx.font = "bold 13px Arial";
+    let t = pt(dbToAngle(-20), VU_ARC_R - 14); ctx.fillStyle = BLACK; ctx.fillText("−", t[0] + 6, t[1] + 6);
+    t = pt(dbToAngle(3), VU_ARC_R - 14);       ctx.fillStyle = RED;   ctx.fillText("+", t[0] - 6, t[1] + 6);
+    ctx.font = "bold 18px Arial"; ctx.fillStyle = BLACK;
+    ctx.fillText("VU", CX, VU_H - 16);
 }
 drawVUBase("cvsL"); drawVUBase("cvsR");
 
@@ -613,7 +618,9 @@ navigator.mediaDevices.getUserMedia({ audio: true }).then(s => {
 btn.onclick = async () => {
     if (audioCtx) { audioCtx.close(); audioCtx = null; btn.innerText = "POWER OFF"; btn.classList.remove("on"); return; }
     
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    // 遅れをできるだけ小さくするよう、ブラウザに要求する (聞いてくれるかは機種しだい)
+    const AC = window.AudioContext || window.webkitAudioContext;
+    try { audioCtx = new AC({ latencyHint: 0 }); } catch (e) { audioCtx = new AC(); }
     
     const constraints = { 
         audio: { 
@@ -621,7 +628,8 @@ btn.onclick = async () => {
             channelCount: { exact: 2 }, 
             echoCancellation: false,
             noiseSuppression: false,
-            autoGainControl: false
+            autoGainControl: false,
+            latency: { ideal: 0 }
         } 
     };
     
@@ -634,6 +642,20 @@ btn.onclick = async () => {
     }
     
     btn.innerText = "POWER ON"; btn.classList.add("on");
+
+    // ブラウザが報告している遅れを表示する (報告しないブラウザでは -- になる)
+    const showLatency = () => {
+        if (!audioCtx) return;
+        const ms = v => (typeof v === "number" && isFinite(v)) ? (v * 1000).toFixed(0) + "ms" : "--";
+        const tr = stream.getAudioTracks()[0];
+        const st = tr && tr.getSettings ? tr.getSettings() : {};
+        document.getElementById("latVal").innerText =
+            "遅れ 入力 " + ms(st.latency) +
+            " / 処理 " + ms(audioCtx.baseLatency) +
+            " / " + audioCtx.sampleRate + "Hz " + (st.channelCount || "?") + "ch";
+    };
+    showLatency();
+    setTimeout(showLatency, 1500);
     
     const src = audioCtx.createMediaStreamSource(stream);
     const splitter = audioCtx.createChannelSplitter(2);
@@ -797,6 +819,46 @@ loudProc.connect(audioCtx.destination);   // 動かすためにつなぐ。音�
     let vuLastT = null, vuCarry = 0;
     const MAX_FPS = 60;         // 描画の上限 (1秒あたりの回数)
 
+    // VU-BALLISTIC-BEGIN
+    // ===== 針の動き =====
+    // "standard" = VUの規格どおり (音が入って0.3秒で99%に届き、ごくわずかに行き過ぎて戻る)
+    // "legacy"   = 以前の動き (しゃべりで合わせ込んだもの)
+    const VU_BALLISTIC = "standard";
+    const VU_RISE_MS = 300;     // 99%に届くまでの時間 (ミリ秒)。小さくすると針が速くなる
+    const VU_ZETA = 0.81;       // 行き過ぎの量を決める数字。0.81で約1.3%行き過ぎる。1にすると行き過ぎない
+
+    // 「99%に届く時間」から、針のばねの強さを求める
+    const VU_WN = (() => {
+        const z = VU_ZETA, wd = Math.sqrt(Math.max(1e-9, 1 - z * z));
+        let x = 0;
+        for (; x < 50; x += 0.0005) {
+            const y = 1 - Math.exp(-z * x) * (Math.cos(wd * x) + z / wd * Math.sin(wd * x));
+            if (y >= 0.99) break;
+        }
+        return x / (VU_RISE_MS / 1000);
+    })();
+
+    // 針を、ばねと重りのある実物の針と同じ式で dt 秒ぶん進める。u が目標、st.y が針の位置
+    function vuStep(st, u, dt){
+        const steps = Math.max(1, Math.ceil(dt / 0.001));
+        const h = dt / steps;
+        for (let k = 0; k < steps; k++) {
+            st.v += (VU_WN * VU_WN * (u - st.y) - 2 * VU_ZETA * VU_WN * st.v) * h;
+            st.y += st.v * h;
+        }
+        if (st.y < 0) { st.y = 0; st.v = 0; }
+        return st.y;
+    }
+
+    // buf の新しいほうから n 個の、絶対値の平均
+    function vuMeanAbs(buf, n){
+        let t = 0;
+        for (let i = buf.length - n; i < buf.length; i++) t += Math.abs(buf[i]);
+        return n ? t / n : 0;
+    }
+    const vuStL = { y: 0, v: 0 }, vuStR = { y: 0, v: 0 };
+    // VU-BALLISTIC-END
+
     function loop(ts) {
         if (!audioCtx) return;
 
@@ -835,12 +897,22 @@ vuCarry -= Math.floor(vuCarry);
 
      
         
-        const targetL = dbToAngle(Math.max(-20, Math.min(3, 20 * Math.log10(vuAvgPush(vuAvgL, bufL, vuN) || 0.00001) + 23.8)));
-        const targetR = dbToAngle(Math.max(-20, Math.min(3, 20 * Math.log10(vuAvgPush(vuAvgR, bufR, vuN) || 0.00001) + 23.8)));
+        if (VU_BALLISTIC === "standard") {
+            // 前の描画からいままでに入ってきた音だけを平均して、針の式に渡す
+            const vuDt = vuFrames / VU_REF_FPS;
+            const vuNew = Math.max(1, Math.min(bufL.length, Math.round(vuDt * audioCtx.sampleRate)));
+            const lvL = vuStep(vuStL, vuMeanAbs(bufL, vuNew), vuDt);
+            const lvR = vuStep(vuStR, vuMeanAbs(bufR, vuNew), vuDt);
+            currentL = dbToAngle(Math.max(-200, Math.min(3, 20 * Math.log10(lvL || 0.00001) + 23.8)));
+            currentR = dbToAngle(Math.max(-200, Math.min(3, 20 * Math.log10(lvR || 0.00001) + 23.8)));
+        } else {
+            const targetL = dbToAngle(Math.max(-200, Math.min(3, 20 * Math.log10(vuAvgPush(vuAvgL, bufL, vuN) || 0.00001) + 23.8)));
+            const targetR = dbToAngle(Math.max(-200, Math.min(3, 20 * Math.log10(vuAvgPush(vuAvgR, bufR, vuN) || 0.00001) + 23.8)));
 
-        const vuK = 1 - Math.pow(1 - VU_SMOOTH, vuFrames);
-        currentL += (targetL - currentL) * vuK;
-        currentR += (targetR - currentR) * vuK;
+            const vuK = 1 - Math.pow(1 - VU_SMOOTH, vuFrames);
+            currentL += (targetL - currentL) * vuK;
+            currentR += (targetR - currentR) * vuK;
+        }
         
         document.getElementById("ndlL").style.transform = `rotate(${90-currentL}deg)`;
         document.getElementById("ndlR").style.transform = `rotate(${90-currentR}deg)`;
