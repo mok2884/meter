@@ -85,7 +85,10 @@ canvas { position: absolute; top: 0; left: 0; z-index: 5; }
 .pbtn:hover{ background:#383838; border-color:#777; }
 .pbtn:active{ background:#1c1c1c; }
 .pbtn.on{ background:#0a7a3c; border-color:#16c060; color:#fff; }
-.pbtn.tab{ width:120px; }
+.pbtn.tab{ width:104px; }
+.tpBox{ display:flex; flex-direction:column; gap:3px; margin-left:6px; font-size:12px; line-height:1; color:#888; font-variant-numeric:tabular-nums; white-space:nowrap; text-align:left; }
+.tpBox .tpLab{ display:inline-block; width:46px; }
+.tpBox .tpNum{ display:inline-block; width:40px; text-align:right; }
 .loudCol{ display:flex; flex-direction:column; align-items:center; gap:6px; width:52px; }
 .loudName{ font-size:12px; color:#aaa; }
 .loudNum{ font-size:15px; color:#ccc; font-variant-numeric:tabular-nums; white-space:nowrap; }
@@ -199,9 +202,14 @@ canvas { position: absolute; top: 0; left: 0; z-index: 5; }
     <div style="display:flex; align-items:center; gap:8px; width:760px;">
         <button id="tabRta" class="pbtn tab on">RTA</button>
         <button id="tabLoud" class="pbtn tab">LOUDNESS</button>
+        <div class="tpBox">
+            <div><span class="tpLab">TP 10s</span><span class="tpNum" id="tpRecentVal">--.-</span> dBTP</div>
+            <div><span class="tpLab">TP MAX</span><span class="tpNum" id="tpMaxVal">--.-</span> dBTP</div>
+        </div>
         <div style="flex:1;"></div>
-        <div style="width:290px; text-align:right; white-space:nowrap; color:#0f0; line-height:1;">
-            <span style="font-size:12px; color:#aaa; margin-right:6px;">INTEGRATED</span><span id="lkfsVal" style="font-size:50px; font-weight:bold; font-variant-numeric:tabular-nums;">--.-</span><span style="font-size:18px;"> LKFS</span>
+        <div style="display:flex; flex-direction:column; align-items:flex-end; white-space:nowrap; color:#0f0; line-height:1;">
+            <span style="font-size:11px; color:#aaa; margin-bottom:2px;">INTEGRATED</span>
+            <div><span id="lkfsVal" style="font-size:50px; font-weight:bold; font-variant-numeric:tabular-nums;">--.-</span><span style="font-size:18px;"> LKFS</span></div>
         </div>
         <div style="display:flex; gap:6px; margin-left:10px;">
             <button id="lkfsStart" class="pbtn">START</button>
@@ -254,6 +262,20 @@ function fitScreen(){
 
     panel.style.transform =
         `scale(${scale})`;
+
+    scopeResize();
+}
+
+// スコープの絵を、実際に表示される細かさで描く (拡大でぼやけないように)
+let SCOPE_RES = 1;   // スコープ1pxあたりの画面上の実ピクセル数
+function scopeResize(){
+    const cv = document.getElementById("cvsScope");
+    if (!cv) return;
+    cv.style.width = "220px"; cv.style.height = "220px";
+    const k = cv.getBoundingClientRect().width / 220 * (window.devicePixelRatio || 1);
+    const px = Math.max(220, Math.round(220 * k));
+    if (cv.width !== px) { cv.width = px; cv.height = px; }
+    SCOPE_RES = cv.width / 220;
 }
 
 // 合わせるのは、開いたときと、横幅が変わったとき(回転など)だけ。
@@ -447,7 +469,78 @@ function loudReset(){
     gateSum.fill(0);
     loudI = null;
     loudRunBlocks = 0;
+    tpMaxLin = 0;
 }
+
+// TP-BEGIN
+// ===== トゥルーピーク (ITU-R BS.1770 の考え方: 4倍に細かくして、点と点の間の山まで見る) =====
+const TP_HOLD_SEC = 10;      // 「直近」の最大値を残す秒数
+const TP_WARN = -1;          // これを超えたら数字の色を変える (dBTP)
+const TP_OS = 4, TP_TAPS = 12;   // 4倍に細かくする。1相あたり12タップ
+
+// 補間フィルター (窓つきsinc)。4つの相に分けて持つ
+const TP_PHASES = (() => {
+    const N = TP_OS * TP_TAPS, beta = 5.0, fc = 0.92;
+    const i0 = x => { let s = 1, t = 1; for (let k = 1; k < 30; k++) { t *= (x / (2 * k)) ** 2; s += t; } return s; };
+    const h = [];
+    for (let n = 0; n < N; n++) {
+        const t = (n - N / 2) / TP_OS;
+        const sinc = t === 0 ? 1 : Math.sin(Math.PI * fc * t) / (Math.PI * fc * t);
+        const r = (n - N / 2) / (N / 2);
+        const w = Math.abs(r) <= 1 ? i0(beta * Math.sqrt(1 - r * r)) / i0(beta) : 0;
+        h.push(fc * sinc * w);
+    }
+    const ph = [];
+    for (let p = 0; p < TP_OS; p++) {
+        const c = new Float64Array(TP_TAPS);
+        let s = 0;
+        for (let j = 0; j < TP_TAPS; j++) { c[j] = h[p + TP_OS * j]; s += c[j]; }
+        for (let j = 0; j < TP_TAPS; j++) c[j] /= s;    // 直流の利得を1にそろえる
+        ph.push(c);
+    }
+    return ph;
+})();
+
+// 直近の音を覚えておく箱 (左右それぞれ)
+function tpMakeState(){ return { buf: new Float64Array(TP_TAPS * 2), pos: 0 }; }
+let tpStL = tpMakeState(), tpStR = tpMakeState();
+
+// 1チャンネルぶんの音を流して、細かくした波の最大値(絶対値)を返す
+function tpRun(st, x){
+    const buf = st.buf, T = TP_TAPS;
+    let pos = st.pos, peak = 0;
+    for (let i = 0; i < x.length; i++) {
+        const v = x[i];
+        buf[pos] = v; buf[pos + T] = v;          // 2重に持って、折り返しの計算を省く
+        pos = (pos + 1) % T;
+        for (let p = 0; p < TP_OS; p++) {
+            const c = TP_PHASES[p];
+            let acc = 0;
+            for (let j = 0; j < T; j++) acc += c[j] * buf[pos + T - 1 - j];
+            const a = acc < 0 ? -acc : acc;
+            if (a > peak) peak = a;
+        }
+    }
+    st.pos = pos;
+    return peak;
+}
+
+const tpRecent = [];      // [時刻, 最大値] を直近 TP_HOLD_SEC 秒ぶん
+let tpMaxLin = 0;         // STARTからの最大値 (RESETで0)
+
+function tpFeed(L, R, now, running){
+    const pk = Math.max(tpRun(tpStL, L), tpRun(tpStR, R));
+    tpRecent.push([now, pk]);
+    while (tpRecent.length && tpRecent[0][0] < now - TP_HOLD_SEC) tpRecent.shift();
+    if (running && pk > tpMaxLin) tpMaxLin = pk;
+}
+function tpRecentLin(){
+    let m = 0;
+    for (const e of tpRecent) if (e[1] > m) m = e[1];
+    return m;
+}
+const tpDb = lin => lin > 1e-6 ? 20 * Math.log10(lin) : -Infinity;
+// TP-END
 
 // 400msブロックを1個、積算に加える
 function loudAddBlock(e){
@@ -748,6 +841,7 @@ loudProc.channelInterpretation = "discrete";   // モノラル入力はLだけ�
 loudProc.onaudioprocess = e => {
     const L = e.inputBuffer.getChannelData(0);
     const R = e.inputBuffer.getChannelData(1);
+    tpFeed(L, R, audioCtx.currentTime, loudRun);   // トゥルーピーク
     for (let i = 0; i < L.length; i++) {
         const l = kHpL.run(kShL.run(L[i]));
         const r = kHpR.run(kShR.run(R[i]));
@@ -767,7 +861,7 @@ loudProc.connect(audioCtx.destination);   // 動かすためにつなぐ。音�
     // 音の経路の中で先に L+R (縦) と R-L (横) を作ってから読む。
     // L と R が同じなら R-L は必ず 0 になるので、モノラルが一瞬広がって見えることがない
     const SCOPE_POINTS = 1024;  // 1回に打つ点の数 (音のサンプル1個につき1点)
-    const SCOPE_DOT = 1.5;      // 点の大きさ (px)
+    const SCOPE_DOT = 1;        // 点の大きさ (px)。画面のピクセルにそろえて打つので、モノラルは細い1本の線になる
     const SCOPE_DOT_ALPHA = 0.4;// 点の濃さ (0〜1)。重なった場所ほど明るくなる
     const SCOPE_FPS = 60;       // 1秒に描く回数
     const SCOPE_SCALE = 160;    // 倍率x1.0のときの大きさ (以前は40。4倍にした)
@@ -922,18 +1016,24 @@ vuCarry -= Math.floor(vuCarry);
             anaMid.getFloatTimeDomainData(bufMid);
             anaSide.getFloatTimeDomainData(bufSide);
 
+            scopeCtx.setTransform(SCOPE_RES, 0, 0, SCOPE_RES, 0, 0);
             scopeCtx.fillStyle = "rgba(0, 10, 0, " + SCOPE_FADE + ")"; scopeCtx.fillRect(0, 0, 220, 220);
             scopeCtx.strokeStyle = "#1a3a1a"; scopeCtx.lineWidth = 1; scopeCtx.beginPath(); scopeCtx.moveTo(110, 0); scopeCtx.lineTo(110, 220); scopeCtx.moveTo(0, 110); scopeCtx.lineTo(220, 110); scopeCtx.stroke();
             // 線でつながず、サンプルごとに点を打つ。
             // なめらかな音は点が詰まって線に見え、複雑な音は点がばらけて雲に見える
             scopeCtx.fillStyle = "rgba(0, 255, 102, " + SCOPE_DOT_ALPHA + ")";
             const scopeStart = bufMid.length - Math.min(bufMid.length, SCOPE_POINTS);
-            const scopeK = sG * SCOPE_SCALE, scopeH = SCOPE_DOT / 2;
+            // 点は画面の実ピクセル単位で、ピクセルの境目にそろえて打つ (にじませない)
+            scopeCtx.setTransform(1, 0, 0, 1, 0, 0);
+            const scopeK = sG * SCOPE_SCALE * SCOPE_RES;
+            const scopeC = 110 * SCOPE_RES;
+            const scopeD = Math.max(1, Math.round(SCOPE_DOT * SCOPE_RES));
+            const scopeH = Math.floor(scopeD / 2);
             for(let i=scopeStart; i<bufMid.length; i++) {
                 scopeCtx.fillRect(
-                    110 + bufSide[i] * scopeK - scopeH,
-                    110 - bufMid[i] * scopeK - scopeH,
-                    SCOPE_DOT, SCOPE_DOT);
+                    Math.round(scopeC + bufSide[i] * scopeK) - scopeH,
+                    Math.round(scopeC - bufMid[i] * scopeK) - scopeH,
+                    scopeD, scopeD);
             }
         }
 const loudPct = v => Math.max(0, Math.min(100,
@@ -948,6 +1048,17 @@ barS.style.height = loudPct(loudS) + "%";
 setText("lkfsVal", loudI === null ? "--.-" : loudI.toFixed(1));
 setText("mVal", loudFmt(loudM));
 setText("sVal", loudFmt(loudS));
+
+// トゥルーピーク。普段は灰色。-1dBTPを超えたら黄、0dBTPを超えたら赤に寄せる
+const tpShow = (id, lin) => {
+    const db = tpDb(lin);
+    setText(id, db < -70 ? "--.-" : db.toFixed(1));
+    const el = textCache[id].el;
+    const col = db > 0 ? "#c0504d" : db > TP_WARN ? "#c9a227" : "";
+    if (el.style.color !== col) el.style.color = col;
+};
+tpShow("tpRecentVal", tpRecentLin());
+tpShow("tpMaxVal", tpMaxLin);
 
 
         // ===== RTA描画 =====
