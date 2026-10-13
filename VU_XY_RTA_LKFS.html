@@ -544,7 +544,7 @@ let loudM = -120, loudS = -120;     // いまのM / S
 let loudI = null;                   // 積算値 (STARTを押すまで null)
 let loudRun = false;                // 積算中かどうか
 let loudRunBlocks = 0;
-const loudRing = [];                // 100msごとのパワー。直近3秒分だけ持つ
+const loudRing = [];                // 10msごとのパワー。直近3秒分だけ持つ
 const loudHist = [];                // 履歴グラフ用。確定したバーの値だけ持つ
 let loudHistCnt = 0;                // 進行中のバーが何個ぶんの100msを数えたか
 let loudDirty = true;               // 履歴グラフを描き直す必要があるか
@@ -658,19 +658,26 @@ function loudAddBlock(e){
     if (n) loudI = toLkfs(s / n);
 }
 
-// 100msぶんのパワー(L+R)を受け取る
+// 10msぶんのパワー(L+R)を受け取る。
+// M (400ms) と S (3秒) は10msごとに更新する (短い音の山を取りこぼさないように)。
+// 積算のゲートは規格どおり、400msのブロックを100msごとに作る
+let loudTick = 0;      // 10msの数え (10回で100ms)
 function loudPush(e){
     loudRing.push(e);
-    if (loudRing.length > 30) loudRing.shift();
+    if (loudRing.length > 300) loudRing.shift();
 
     const len = loudRing.length;
-    let s4 = 0, s30 = 0;
+    let s40 = 0, s300 = 0;
     for (let i = 0; i < len; i++) {
-        s30 += loudRing[i];
-        if (i >= len - 4) s4 += loudRing[i];
+        s300 += loudRing[i];
+        if (i >= len - 40) s40 += loudRing[i];
     }
-    loudM = toLkfs(s4 / Math.min(4, len));
-    loudS = toLkfs(s30 / len);
+    loudM = toLkfs(s40 / Math.min(40, len));
+    loudS = toLkfs(s300 / len);
+    loudDirty = true;
+
+    if (++loudTick < 10) return;            // ここから下は100msごと
+    loudTick = 0;
 
     // 3秒たったら、その3秒ぶんの値をバー1本として確定する
     if (++loudHistCnt >= LOUD_BAR_SEC * 10) {
@@ -678,9 +685,8 @@ function loudPush(e){
         loudHist.push(loudS);
         if (loudHist.length > LOUD_HIST_BARS - 1) loudHist.shift();
     }
-    loudDirty = true;
 
-    if (loudRun && ++loudRunBlocks >= 4) loudAddBlock(s4 / 4);
+    if (loudRun && ++loudRunBlocks >= 4) loudAddBlock(s40 / Math.min(40, len));
 }
 
 // 履歴グラフ (RTAの枠に描く)
@@ -952,9 +958,10 @@ gainNode.connect(rtaAnalyserLow);
 const kw = makeKWeight(audioCtx.sampleRate);
 const kShL = new LoudBiquad(kw.shelf.b, kw.shelf.a), kShR = new LoudBiquad(kw.shelf.b, kw.shelf.a);
 const kHpL = new LoudBiquad(kw.hp.b, kw.hp.a),       kHpR = new LoudBiquad(kw.hp.b, kw.hp.a);
-const loudSubN = Math.round(audioCtx.sampleRate * 0.1);   // 100ms
+const loudSubN = Math.round(audioCtx.sampleRate * 0.01);  // 10ms
 let loudSubSum = 0, loudSubCnt = 0;
 loudRing.length = 0;
+loudTick = 0;
 loudRunBlocks = 0;
 
 const loudProc = audioCtx.createScriptProcessor(2048, 2, 1);
