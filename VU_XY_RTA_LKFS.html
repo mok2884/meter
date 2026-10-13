@@ -8,8 +8,12 @@ body { background-color: #050505; margin: 0; display: flex; flex-direction: colu
 .display-row { display: flex; gap: 20px; align-items: flex-end; }
 .unit { display: flex; flex-direction: column; align-items: center; gap: 8px; }
 .label { color: #eee; font-weight: bold; font-size: 16px; font-family: sans-serif; }
-.meter { position: relative; width: 280px; height: 145px; background-color: #fdfae1; overflow: hidden; border-radius: 4px; border: 1px solid #444; }
-.scope { position: relative; width: 220px; height: 220px; background-color: #000; border: 1px solid #444; border-radius: 4px; }
+/* 窓の表示の大きさ。中身 (VUは280x145、スコープは220x220で描く) をまるごと拡大縮小する */
+:root{ --vuK: 0.92; --scopeK: 1.09; }
+.meter { position: relative; width: calc(280px * var(--vuK)); height: calc(145px * var(--vuK)); background-color: #fdfae1; overflow: hidden; border-radius: 4px; border: 1px solid #444; }
+.meterInner { position: absolute; left: 0; top: 0; width: 280px; height: 145px; transform-origin: 0 0; transform: scale(var(--vuK)); }
+.scope { position: relative; width: calc(220px * var(--scopeK)); height: calc(220px * var(--scopeK)); background-color: #000; border: 1px solid #444; border-radius: 4px; overflow: hidden; }
+.scopeInner { position: absolute; left: 0; top: 0; width: 220px; height: 220px; transform-origin: 0 0; transform: scale(var(--scopeK)); }
 .needle {
     position: absolute;
     top: 181px;
@@ -158,16 +162,20 @@ input[type=range].rTrim{ accent-color:#5a5a5a; filter:grayscale(1) brightness(0.
     <div class="unit">
         <div class="label">L-VU</div>
         <div class="meter">
+            <div class="meterInner">
             <canvas id="cvsL" width="280" height="145"></canvas>
             <div id="ndlL" class="needle"></div>
+            </div>
         </div>
     </div>
 
     <div class="unit">
         <div class="label">R-VU</div>
         <div class="meter">
+            <div class="meterInner">
             <canvas id="cvsR" width="280" height="145"></canvas>
             <div id="ndlR" class="needle"></div>
+            </div>
         </div>
     </div>
 
@@ -181,7 +189,7 @@ input[type=range].rTrim{ accent-color:#5a5a5a; filter:grayscale(1) brightness(0.
         <div class="label">PHASE SCOPE</div>
 
         <div class="scope">
-            <canvas id="cvsScope" width="220" height="220"></canvas>
+            <div class="scopeInner"><canvas id="cvsScope" width="220" height="220"></canvas></div>
         </div>
 
     </div>
@@ -990,7 +998,8 @@ loudProc.connect(audioCtx.destination);   // 動かすためにつなぐ。音�
     // L と R が同じなら R-L は必ず 0 になるので、モノラルが一瞬広がって見えることがない
     const SCOPE_POINTS = 1024;  // 1回に打つ点の数 (音のサンプル1個につき1点)
     const SCOPE_DOT = 1;        // 点の大きさ (px)。画面のピクセルにそろえて打つので、モノラルは細い1本の線になる
-    const SCOPE_DOT_ALPHA = 0.4;// 点の濃さ (0〜1)。重なった場所ほど明るくなる
+    const SCOPE_DOT_ALPHA = 0.5;// いちばん明るいところの濃さ (0〜1)。重なった場所ほど明るくなる
+    const SCOPE_BEAM_LEN = 1.5; // この長さ(px)より長く動いた線ほど暗くする。大きくすると全体が線っぽく明るくなる
     const SCOPE_FPS = 60;       // 1秒に描く回数
     const SCOPE_SCALE = 160;    // 倍率x1.0のときの大きさ (以前は40。4倍にした)
     const SCOPE_FADE = 0.18;    // 残像の消える速さ (大きいほど速く消える)
@@ -1141,22 +1150,41 @@ vuCarry -= Math.floor(vuCarry);
             scopeCtx.setTransform(SCOPE_RES, 0, 0, SCOPE_RES, 0, 0);
             scopeCtx.fillStyle = "rgba(0, 10, 0, " + SCOPE_FADE + ")"; scopeCtx.fillRect(0, 0, 220, 220);
             scopeCtx.strokeStyle = "#1a3a1a"; scopeCtx.lineWidth = 1; scopeCtx.beginPath(); scopeCtx.moveTo(110, 0); scopeCtx.lineTo(110, 220); scopeCtx.moveTo(0, 110); scopeCtx.lineTo(220, 110); scopeCtx.stroke();
-            // 線でつながず、サンプルごとに点を打つ。
-            // なめらかな音は点が詰まって線に見え、複雑な音は点がばらけて雲に見える
-            scopeCtx.fillStyle = "rgba(0, 255, 102, " + SCOPE_DOT_ALPHA + ")";
+            // 光の点が動いた跡のように描く。サンプルとサンプルを短い線でつなぎ、
+            // ゆっくり動いた (短い) 線は明るく、速く動いた (長い) 線は暗くする。
+            // なめらかな音は明るい線に、激しい音は点や細い糸の集まりに見え、真ん中を横切る動きはほとんど光らない
             const scopeStart = bufMid.length - Math.min(bufMid.length, SCOPE_POINTS);
             // 点は画面の実ピクセル単位で、ピクセルの境目にそろえて打つ (にじませない)
             scopeCtx.setTransform(1, 0, 0, 1, 0, 0);
             const scopeK = sG * SCOPE_SCALE * SCOPE_RES;
             const scopeC = 110 * SCOPE_RES;
             const scopeD = Math.max(1, Math.round(SCOPE_DOT * SCOPE_RES));
-            const scopeH = Math.floor(scopeD / 2);
-            for(let i=scopeStart; i<bufMid.length; i++) {
-                scopeCtx.fillRect(
-                    Math.round(scopeC + bufSide[i] * scopeK) - scopeH,
-                    Math.round(scopeC - bufMid[i] * scopeK) - scopeH,
-                    scopeD, scopeD);
+            const scopeO = (scopeD % 2) ? 0.5 : 0;           // 線をピクセルの境目にそろえる
+            const beamLen = SCOPE_BEAM_LEN * SCOPE_RES;
+            // 明るさを6段階に分けて、段階ごとにまとめて描く (描く回数を減らすため)
+            const levels = [1, 0.6, 0.36, 0.2, 0.1, 0.05];
+            const paths = levels.map(() => new Path2D());
+            let px = Math.round(scopeC + bufSide[scopeStart] * scopeK) + scopeO;
+            let py = Math.round(scopeC - bufMid[scopeStart] * scopeK) + scopeO;
+            for(let i=scopeStart+1; i<bufMid.length; i++) {
+                const x = Math.round(scopeC + bufSide[i] * scopeK) + scopeO;
+                const y = Math.round(scopeC - bufMid[i] * scopeK) + scopeO;
+                const len = Math.hypot(x - px, y - py);
+                const b = beamLen / Math.max(len, beamLen);   // 短いほど1に近い
+                let k = 0;
+                while (k < levels.length && b < levels[k] * 0.8) k++;
+                if (k < levels.length) {
+                    if (len < 0.5) { paths[k].moveTo(x, y - 0.5); paths[k].lineTo(x, y + 0.5); }   // 止まっている点
+                    else { paths[k].moveTo(px, py); paths[k].lineTo(x, y); }
+                }
+                px = x; py = y;
             }
+            scopeCtx.lineWidth = scopeD;
+            scopeCtx.lineCap = "butt";
+            levels.forEach((lv, k) => {
+                scopeCtx.strokeStyle = "rgba(0, 255, 102, " + (SCOPE_DOT_ALPHA * lv) + ")";
+                scopeCtx.stroke(paths[k]);
+            });
         }
 const loudPct = v => Math.max(0, Math.min(100,
     (v - LOUD_MIN) / (LOUD_MAX - LOUD_MIN) * 100));
