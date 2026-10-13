@@ -976,7 +976,7 @@ const RTA_HI_MS = 30;     // 高域用：1秒に約30回
 const RTA_LO_MS = 100;    // 低域用：1秒に約10回
 let rtaHiT = 0, rtaLoT = 0;
     
-    anaL.fftSize = anaR.fftSize = 2048;
+    anaL.fftSize = anaR.fftSize = 32768;   // VUは直近約0.7秒(48k)の音から針の位置を計算する
     // 入力 → (モードに応じて配線) → gainNode。gainNode はいつも 2ch、複製や混ぜ合わせはしない
     gainNode.channelCount = 2;
     gainNode.channelCountMode = "explicit";
@@ -1061,7 +1061,7 @@ loudProc.connect(audioCtx.destination);   // 動かすためにつなぐ。音�
     const bufMid = new Float32Array(1024), bufSide = new Float32Array(1024);
     let scopeLastT = 0;
 
-    const bufL = new Float32Array(2048), bufR = new Float32Array(2048);
+    const bufL = new Float32Array(32768), bufR = new Float32Array(32768);
     const VU_SNAP = 1024;                     // 基準の画面で、1回の描画ごとに使うサンプル数
 
     const scopeCtx = document.getElementById("cvsScope").getContext("2d");
@@ -1134,6 +1134,32 @@ loudProc.connect(audioCtx.destination);   // 動かすためにつなぐ。音�
         return n ? t / n : 0;
     }
     const vuStL = { y: 0, v: 0 }, vuStR = { y: 0, v: 0 };
+
+    // 針の位置を、手元にある音(buf)の全部を1ミリ秒ずつ途切れなく式に通して求める。
+    // 描画のたびに区切った短い平均を使うと、低い音(100Hzなど)で針が震えるため。
+    // 出発点は、前回の計算で同じ時刻あたりにいた針の位置と速さを使う
+    const VU_BLK = Math.max(1, Math.round(audioCtx.sampleRate * 0.001));
+    const makeVuTrace = () => ({ y: new Float32Array(40000), v: new Float32Array(40000), n: 0 });
+    const vuTrL = makeVuTrace(), vuTrR = makeVuTrace();
+    function vuNeedle(tr, buf, advSamples){
+        const nb = Math.floor(buf.length / VU_BLK);
+        let i = buf.length - nb * VU_BLK;
+        let y = 0, v = 0;
+        if (tr.n > 0) {
+            const j = Math.min(tr.n - 1, Math.max(0, Math.round(advSamples / VU_BLK) - 1));
+            y = tr.y[j]; v = tr.v[j];
+        }
+        const h = VU_BLK / audioCtx.sampleRate, k1 = VU_WN * VU_WN, k2 = 2 * VU_ZETA * VU_WN;
+        for (let b = 0; b < nb; b++) {
+            let t = 0;
+            for (let j = 0; j < VU_BLK; j++) t += Math.abs(buf[i++]);
+            v += (k1 * (t / VU_BLK - y) - k2 * v) * h;
+            y += v * h;
+            tr.y[b] = y; tr.v[b] = v;
+        }
+        tr.n = nb;
+        return y < 0 ? 0 : y;
+    }
     // VU-BALLISTIC-END
 
     function loop(ts) {
@@ -1170,10 +1196,9 @@ vuCarry -= Math.floor(vuCarry);
         
         if (VU_BALLISTIC === "standard") {
             // 前の描画からいままでに入ってきた音だけを平均して、針の式に渡す
-            const vuDt = vuFrames / VU_REF_FPS;
-            const vuNew = Math.max(1, Math.min(bufL.length, Math.round(vuDt * audioCtx.sampleRate)));
-            const lvL = vuStep(vuStL, vuMeanAbs(bufL, vuNew), vuDt);
-            const lvR = vuStep(vuStR, vuMeanAbs(bufR, vuNew), vuDt);
+            const vuAdv = vuFrames / VU_REF_FPS * audioCtx.sampleRate;   // 前回から進んだサンプル数
+            const lvL = vuNeedle(vuTrL, bufL, vuAdv);
+            const lvR = vuNeedle(vuTrR, bufR, vuAdv);
             currentL = dbToAngle(Math.max(-200, Math.min(3, 20 * Math.log10(lvL || 0.00001) + VU_CAL)));
             currentR = dbToAngle(Math.max(-200, Math.min(3, 20 * Math.log10(lvR || 0.00001) + VU_CAL)));
         } else {
