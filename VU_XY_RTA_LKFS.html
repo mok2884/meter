@@ -327,6 +327,8 @@ async function requestWakeLock(){
     } catch (e) {}
     updateAwakeState();
 }
+// 動画は、Wake Lock が効かなかったときの予備。動画が動くと音の経路が乱れる機種があるので、
+// Wake Lock が効いているときは流さない
 const keepAwakeVideo = (() => {
     const v = document.createElement("video");
     v.setAttribute("playsinline", ""); v.setAttribute("muted", ""); v.muted = true;
@@ -343,11 +345,17 @@ const keepAwakeVideo = (() => {
     return v;
 })();
 function keepAwake(){
-    requestWakeLock();
-    keepAwakeVideo.play().then(() => {
-        videoAwake = true; updateAwakeState();
-    }).catch(() => {
-        videoAwake = false; updateAwakeState();
+    requestWakeLock().then(() => {
+        if (wakeLock) {
+            if (!keepAwakeVideo.paused) keepAwakeVideo.pause();
+            videoAwake = false; updateAwakeState();
+            return;
+        }
+        keepAwakeVideo.play().then(() => {
+            videoAwake = true; updateAwakeState();
+        }).catch(() => {
+            videoAwake = false; updateAwakeState();
+        });
     });
 }
 // 画面に触れたとき、POWER ON のとき、裏から戻ったときに、毎回頼み直す
@@ -879,17 +887,15 @@ btn.onclick = async () => {
     keepAwake();
 
     // ブラウザが報告している遅れを表示する (報告しないブラウザでは -- になる)
+    const ms = v => (typeof v === "number" && isFinite(v)) ? (v * 1000).toFixed(0) + "ms" : "--";
+    const tr0 = stream.getAudioTracks()[0];
+    const st0 = tr0 && tr0.getSettings ? tr0.getSettings() : {};      // 入力機器の情報は最初に1回だけ
+    const sr0 = audioCtx.sampleRate / 1000;
+    const latHead = "IN " + ms(st0.latency) + " / " + ms(audioCtx.baseLatency) +
+        " / " + (Number.isInteger(sr0) ? sr0 : sr0.toFixed(1)) + "k " + (st0.channelCount || "?") + "ch";
     const showLatency = () => {
         if (!audioCtx) return;
-        const ms = v => (typeof v === "number" && isFinite(v)) ? (v * 1000).toFixed(0) + "ms" : "--";
-        const tr = stream.getAudioTracks()[0];
-        const st = tr && tr.getSettings ? tr.getSettings() : {};
-        const sr = audioCtx.sampleRate / 1000;
-        document.getElementById("latVal").innerText =
-            "IN " + ms(st.latency) +
-            " / " + ms(audioCtx.baseLatency) +
-            " / " + (Number.isInteger(sr) ? sr : sr.toFixed(1)) + "k " + (st.channelCount || "?") + "ch" +
-            " / " + keepAwakeState;
+        setText("latVal", latHead + " / " + keepAwakeState);
     };
     showLatency();
     const latTimer = setInterval(() => { if (!audioCtx) clearInterval(latTimer); else showLatency(); }, 2000);
