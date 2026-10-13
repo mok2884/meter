@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<style>
+body { background-color: #050505; margin: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; font-family: sans-serif; }
+.console { background: #1a1a1a; padding: 25px; border-radius: 12px; border: 2px solid #333; display: flex; flex-direction: column; align-items: center; gap: 15px; }
+.display-row { display: flex; gap: 20px; align-items: flex-end; }
+.unit { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.label { color: #eee; font-weight: bold; font-size: 16px; font-family: sans-serif; }
+.meter { position: relative; width: 280px; height: 150px; background-color: #fdfae1; overflow: hidden; border-radius: 4px; border: 1px solid #444; }
+.scope { position: relative; width: 220px; height: 220px; background-color: #000; border: 1px solid #444; border-radius: 4px; }
+.needle { position: absolute; top: 170px; left: 140px; width: 2px; height: 150px; background: #111; transform-origin: bottom center; margin-top: -150px; z-index: 10; }
+.controls { display: flex; flex-wrap: wrap; justify-content: center; gap: 20px; color: #aaa; margin-top: 10px; }
+.knob-group { display: flex; flex-direction: column; align-items: center; gap: 5px; font-size: 12px; }
+select { background: #333; color: #fff; border: 1px solid #555; padding: 5px; border-radius: 4px; width: 200px; margin-bottom: 10px; }
+input[type=range] { width: 130px; cursor: pointer; }
+#btn { padding: 10px 30px; cursor: pointer; font-weight: bold; border-radius: 4px; border: none; background: #444; color: white; }
+#btn.on { background: #d00; }
+canvas { position: absolute; top: 0; left: 0; z-index: 5; }
+</style>
+</head>
+<body>
+<div class="console">
+    <div class="knob-group">
+        <label style="color:#0f0">SELECT INPUT DEVICE:</label>
+        <select id="micSelect"><option value="">-- Device List --</option></select>
+    </div>
+
+    <div class="display-row">
+        <div class="unit">
+            <div class="label">L-VU</div>
+            <div class="meter"><canvas id="cvsL" width="280" height="150"></canvas><div id="ndlL" class="needle"></div></div>
+        </div>
+        <div class="unit">
+            <div class="label">R-VU</div>
+            <div class="meter"><canvas id="cvsR" width="280" height="150"></canvas><div id="ndlR" class="needle"></div></div>
+        </div>
+        <div class="unit">
+            <div class="label">PHASE SCOPE</div>
+            <div class="scope"><canvas id="cvsScope" width="220" height="220"></canvas></div>
+        </div>
+    </div>
+    
+    <div class="controls">
+        <div class="knob-group"><label>VU GAIN</label><input type="range" id="vuGain" min="0" max="40" value="20"><span id="vuVal">0 dB</span></div>
+        <div class="knob-group"><label>SCOPE SENS.</label><input type="range" id="scopeGain" min="0.1" max="5.0" step="0.1" value="1.0"><span id="scopeVal">x1.0</span></div>
+    </div>
+    <button id="btn">POWER OFF</button>
+</div>
+
+<script>
+// Wake Lock 関連の処理
+let wakeLock = null;
+const requestWakeLock = async () => {
+    try {
+        if ('wakeLock' in navigator) {
+            wakeLock = await navigator.wakeLock.request('screen');
+        }
+    } catch (err) {}
+};
+
+// 初回操作時に Wake Lock を有効にする
+document.body.addEventListener('pointerdown', () => { 
+    if (!wakeLock) requestWakeLock(); 
+}, { once: true });
+
+document.addEventListener('visibilitychange', () => {
+    if (wakeLock !== null && document.visibilityState === 'visible') requestWakeLock();
+});
+
+const VU_W = 280, VU_H = 150, CX = 140, CY = 170, R_BASE = 125;
+const START_DEG = 145, END_DEG = 35;
+const V_MIN = Math.pow(10, -20/20), V_MAX = Math.pow(10, 3/20);
+
+function dbToAngle(db){
+    const v = Math.pow(10, db/20);
+    const norm = (v - V_MIN)/(V_MAX - V_MIN);
+    return START_DEG + (norm * (END_DEG - START_DEG));
+}
+
+function drawVUBase(canvasId) {
+    const ctx = document.getElementById(canvasId).getContext("2d");
+    ctx.clearRect(0, 0, VU_W, VU_H);
+    const mainMarks = [-20, -10, -7, -5, -3, -2, -1, 0, 1, 2, 3];
+    for(let v = -20; v <= 3; v += 0.25) {
+        const rad = (-dbToAngle(v)) * Math.PI / 180;
+        const isRed = (v >= 0);
+        const isMain = mainMarks.includes(v);
+        ctx.beginPath();
+        ctx.strokeStyle = isRed ? "#d00" : "#222";
+        ctx.lineWidth = isMain ? 2.5 : 0.8;
+        let tLen = isMain ? (isRed ? 15 : 10) : 5;
+        ctx.moveTo(CX + Math.cos(rad) * R_BASE, CY + Math.sin(rad) * R_BASE);
+        ctx.lineTo(CX + Math.cos(rad) * (R_BASE + tLen), CY + Math.sin(rad) * (R_BASE + tLen));
+        ctx.stroke();
+        if ([-20, -10, -7, -5, -3, 0, 3].includes(v)) {
+            ctx.font = "bold 15px Arial"; ctx.fillStyle = isRed ? "#d00" : "#222"; ctx.textAlign = "center";
+            ctx.fillText(Math.abs(v), CX + Math.cos(rad)*(R_BASE+28), CY + Math.sin(rad)*(R_BASE+28)+5);
+        }
+    }
+}
+drawVUBase("cvsL"); drawVUBase("cvsR");
+
+const micSelect = document.getElementById('micSelect');
+const btn = document.getElementById("btn");
+let audioCtx, stream, currentL = START_DEG, currentR = START_DEG;
+
+async function getDevices() {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    micSelect.innerHTML = '';
+    devices.filter(d => d.kind === 'audioinput').forEach(d => {
+        const opt = document.createElement('option');
+        opt.value = d.deviceId;
+        opt.text = d.label || `Microphone ${micSelect.length + 1}`;
+        micSelect.appendChild(opt);
+    });
+}
+
+navigator.mediaDevices.getUserMedia({ audio: true }).then(s => {
+    s.getTracks().forEach(t => t.stop());
+    getDevices();
+});
+
+btn.onclick = async () => {
+    if (audioCtx) { audioCtx.close(); audioCtx = null; btn.innerText = "POWER OFF"; btn.classList.remove("on"); return; }
+    
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    
+    const constraints = { 
+        audio: { 
+            deviceId: micSelect.value ? { exact: micSelect.value } : undefined,
+            channelCount: { exact: 2 }, 
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false
+        } 
+    };
+    
+    try {
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+    } catch(e) {
+        console.log("ステレオ強制リトライ");
+        constraints.audio.channelCount = { ideal: 2 };
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+    }
+    
+    btn.innerText = "POWER ON"; btn.classList.add("on");
+    
+    const src = audioCtx.createMediaStreamSource(stream);
+    const splitter = audioCtx.createChannelSplitter(2);
+    const anaL = audioCtx.createAnalyser(), anaR = audioCtx.createAnalyser();
+    const gainNode = audioCtx.createGain();
+    
+    anaL.fftSize = anaR.fftSize = 1024;
+    src.connect(gainNode); gainNode.gain.value = 1; gainNode.connect(splitter);
+    splitter.connect(anaL, 0); splitter.connect(anaR, 1);
+
+    const bufL = new Float32Array(1024), bufR = new Float32Array(1024);
+    const scopeCtx = document.getElementById("cvsScope").getContext("2d");
+    
+    const vuWin = Math.floor(audioCtx.sampleRate * 0.15), vuBufL = [], vuBufR = [];
+
+    let lastX = 110, lastY = 110;
+
+    function loop() {
+        if (!audioCtx) return;
+        const vG = parseFloat(document.getElementById("vuGain").value);
+        const sG = parseFloat(document.getElementById("scopeGain").value);
+        gainNode.gain.value = Math.pow(10, (vG - 20) / 20);
+        document.getElementById("vuVal").innerText = (vG-20>=0?"+":"")+(vG-20)+" dB";
+        document.getElementById("scopeVal").innerText = "x" + sG.toFixed(1);
+
+        anaL.getFloatTimeDomainData(bufL); anaR.getFloatTimeDomainData(bufR);
+        const getRMS = (b, vBuf) => {
+            for(let i=0; i<b.length; i++) vBuf.push(b[i]*b[i]);
+            while(vBuf.length > vuWin) vBuf.shift();
+            return Math.sqrt(vBuf.reduce((a,b)=>a+b,0)/vBuf.length);
+        };
+        
+        const targetL = dbToAngle(Math.max(-20, Math.min(3, 20 * Math.log10(getRMS(bufL, vuBufL) || 0.00001) + 12)));
+        const targetR = dbToAngle(Math.max(-20, Math.min(3, 20 * Math.log10(getRMS(bufR, vuBufR) || 0.00001) + 12)));
+
+        currentL += (targetL - currentL) * 0.145;
+        currentR += (targetR - currentR) * 0.145;
+        
+        document.getElementById("ndlL").style.transform = `rotate(${90-currentL}deg)`;
+        document.getElementById("ndlR").style.transform = `rotate(${90-currentR}deg)`;
+
+        scopeCtx.fillStyle = "rgba(0, 10, 0, 0.18)"; scopeCtx.fillRect(0, 0, 220, 220);
+        scopeCtx.strokeStyle = "#1a3a1a"; scopeCtx.beginPath(); scopeCtx.moveTo(110, 0); scopeCtx.lineTo(110, 220); scopeCtx.moveTo(0, 110); scopeCtx.lineTo(220, 110); scopeCtx.stroke();
+        scopeCtx.beginPath(); scopeCtx.strokeStyle = "#00ff66"; scopeCtx.lineWidth = 1.2;
+        
+        for(let i=0; i<bufL.length; i+=2) {
+            const rawX = (bufR[i] - bufL[i]) * sG * 40 + 110;
+            const rawY = 110 - (bufL[i] + bufR[i]) * sG * 40;
+            const targetX = lastX + (rawX - lastX) * 0.4;
+            const targetY = lastY + (rawY - lastY) * 0.4;
+            if(i===0) scopeCtx.moveTo(targetX, targetY); else scopeCtx.lineTo(targetX, targetY);
+            lastX = targetX;
+            lastY = targetY;
+        }
+        scopeCtx.stroke();
+        requestAnimationFrame(loop);
+    }
+    loop();
+};
+</script>
+</body>
+</html>
