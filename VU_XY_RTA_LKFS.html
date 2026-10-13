@@ -8,15 +8,15 @@ body { background-color: #050505; margin: 0; display: flex; flex-direction: colu
 .display-row { display: flex; gap: 20px; align-items: flex-end; }
 .unit { display: flex; flex-direction: column; align-items: center; gap: 8px; }
 .label { color: #eee; font-weight: bold; font-size: 16px; font-family: sans-serif; }
-.meter { position: relative; width: 280px; height: 150px; background-color: #fdfae1; overflow: hidden; border-radius: 4px; border: 1px solid #444; }
+.meter { position: relative; width: 280px; height: 145px; background-color: #fdfae1; overflow: hidden; border-radius: 4px; border: 1px solid #444; }
 .scope { position: relative; width: 220px; height: 220px; background-color: #000; border: 1px solid #444; border-radius: 4px; }
 .needle {
     position: absolute;
     top: 181px;
     left: 140px;
     width: 0;
-    height: 155px;
-    margin-top: -155px;
+    height: 150px;
+    margin-top: -150px;
     transform-origin: bottom center;
     z-index: 10;
 }
@@ -27,7 +27,7 @@ body { background-color: #050505; margin: 0; display: flex; flex-direction: colu
     left: -3px;
     bottom: 0;
     width: 6px;
-    height: 155px;
+    height: 150px;
     background: #111;
     clip-path: polygon(
         33% 0%,
@@ -86,6 +86,12 @@ canvas { position: absolute; top: 0; left: 0; z-index: 5; }
 .pbtn:active{ background:#1c1c1c; }
 .pbtn.on{ background:#0a7a3c; border-color:#16c060; color:#fff; }
 .pbtn.tab{ width:104px; }
+/* 入力選択の箱と同じ見た目のボタン (LR / LL) */
+.selbtn{ background:#333; color:#999; border:1px solid #555; border-radius:4px; padding:5px 0; width:40px; font-size:13px; font-weight:bold; cursor:pointer; }
+.selbtn.on{ background:#555; color:#fff; border-color:#888; }
+/* Rだけのレベル。いつも暗めの灰色 */
+input[type=range].rTrim{ accent-color:#5a5a5a; filter:grayscale(1) brightness(0.75); }
+#vuValR{ color:#777; font-size:12px; font-variant-numeric:tabular-nums; }
 .tpBox{ display:flex; flex-direction:column; gap:3px; margin-left:6px; font-size:12px; line-height:1; color:#888; font-variant-numeric:tabular-nums; white-space:nowrap; text-align:left; }
 .tpBox .tpLab{ display:inline-block; width:46px; }
 .tpBox .tpNum{ display:inline-block; width:40px; text-align:right; }
@@ -119,29 +125,40 @@ canvas { position: absolute; top: 0; left: 0; z-index: 5; }
             SELECT INPUT DEVICE:
         </label>
 
-        <select id="micSelect">
-            <option value="">
-                -- Device List --
-            </option>
-        </select>
+        <div style="display:flex; gap:6px; align-items:flex-start;">
+            <select id="micSelect">
+                <option value="">
+                    -- Device List --
+                </option>
+            </select>
+            <button id="modeStereo" class="selbtn" title="ステレオ (L→L、R→R)">LR</button>
+            <button id="modeMono" class="selbtn" title="モノラル (L を両方へ)">LL</button>
+        </div>
         <div id="latVal" style="font-size:11px; color:#888; height:14px; white-space:nowrap; font-variant-numeric:tabular-nums;"></div>
     </div>
 
 </div>
 <div style="height:20px;"></div>
         
-   <div style="display:flex; flex-direction:column; align-items:center; margin-bottom:2px;">
+   <div style="display:flex; gap:18px; align-items:flex-start; margin-bottom:2px;">
+   <div style="display:flex; flex-direction:column; align-items:center;">
     <input type="range" id="vuGainCoarse" min="0" max="40" step="1" value="20">
     <input type="range" id="vuGainFine" min="-1" max="1" step="0.1" value="0">
     <span id="vuVal">0.0 dB</span>
-</div>
+   </div>
+   <div style="display:flex; flex-direction:column; align-items:center;">
+    <input type="range" class="rTrim" id="vuGainCoarseR" min="0" max="40" step="1" value="20">
+    <input type="range" class="rTrim" id="vuGainFineR" min="-1" max="1" step="0.1" value="0">
+    <span id="vuValR">R +0.0 dB</span>
+   </div>
+   </div>
 
 <div style="display:flex; gap:20px; align-items:flex-start;">
 
     <div class="unit">
         <div class="label">L-VU</div>
         <div class="meter">
-            <canvas id="cvsL" width="280" height="150"></canvas>
+            <canvas id="cvsL" width="280" height="145"></canvas>
             <div id="ndlL" class="needle"></div>
         </div>
     </div>
@@ -149,7 +166,7 @@ canvas { position: absolute; top: 0; left: 0; z-index: 5; }
     <div class="unit">
         <div class="label">R-VU</div>
         <div class="meter">
-            <canvas id="cvsR" width="280" height="150"></canvas>
+            <canvas id="cvsR" width="280" height="145"></canvas>
             <div id="ndlR" class="needle"></div>
         </div>
     </div>
@@ -305,11 +322,12 @@ document.addEventListener('visibilitychange', () => {
 });
 
 // ===== VUの文字盤 (針の角度・軸・目盛りの位置は実機に合わせてある。見た目は独自) =====
-const VU_W = 280, VU_H = 150;
+const VU_W = 280, VU_H = 145;
 const CX = 140, CY = 181;                 // 針の軸。窓の下端より31px下
 const START_DEG = 133, END_DEG = 47;      // 針が振れる範囲 (水平から測って左右とも47度)
-const VU_ARC_R = 140;                     // 目盛りの弧の半径 (針の軸と同じ中心)
-const VU_LABEL_R = 166;                   // 数字を置く半径
+const VU_ARC_R = 140;                     // 振り切り位置での、針の軸から弧までの距離
+const VU_ARC_DROP = 30;                   // 弧の中心を、針の軸からどれだけ下げるか。大きいほど平たい (0で同心円)
+const VU_LABEL_GAP = 26;                  // 弧から数字までの距離
 
 // 各目盛りが、振れ幅全体のどこにあるか (0 = 音なしの位置、1 = +3)。写真から測った値
 const VU_SCALE = [
@@ -332,43 +350,122 @@ function dbToAngle(db){
     return START_DEG + vuFrac(Math.pow(10, db / 20)) * (END_DEG - START_DEG);
 }
 
+// 弧の形。両端 (振り切りの位置) は軸から VU_ARC_R の場所を通り、中心は軸の VU_ARC_DROP 下にある
+const VU_ARC_RAD = (() => {
+    const a = START_DEG * Math.PI / 180;
+    return Math.hypot(Math.cos(a) * VU_ARC_R, Math.sin(a) * VU_ARC_R + VU_ARC_DROP);
+})();
+// 針の軸から、deg の方向に進んで弧に当たるまでの距離
+function vuArcDist(deg){
+    const s = Math.sin(deg * Math.PI / 180);
+    return -VU_ARC_DROP * s + Math.sqrt(VU_ARC_RAD * VU_ARC_RAD - VU_ARC_DROP * VU_ARC_DROP * (1 - s * s));
+}
+
 function drawVUBase(canvasId) {
     const ctx = document.getElementById(canvasId).getContext("2d");
     ctx.clearRect(0, 0, VU_W, VU_H);
-    const BLACK = "#222", RED = "#d00";
+    const BLACK = "#222", RED = "#d00", SOFT = "#9a9a90";
     const rad = deg => -deg * Math.PI / 180;
-    const pt = (deg, r) => [CX + Math.cos(rad(deg)) * r, CY + Math.sin(rad(deg)) * r];
+    // 針の軸から deg の方向へ、弧から extra だけ外 (マイナスなら内) の点
+    const pt = (deg, extra) => {
+        const r = vuArcDist(deg) + extra;
+        return [CX + Math.cos(rad(deg)) * r, CY + Math.sin(rad(deg)) * r];
+    };
+    const arcLine = (fromDeg, toDeg, extra, color, width) => {
+        ctx.beginPath();
+        const n = 80;
+        for (let i = 0; i <= n; i++) {
+            const d = fromDeg + (toDeg - fromDeg) * i / n;
+            const q = pt(d, extra);
+            if (i === 0) ctx.moveTo(q[0], q[1]); else ctx.lineTo(q[0], q[1]);
+        }
+        ctx.strokeStyle = color; ctx.lineWidth = width; ctx.stroke();
+    };
 
-    // 弧。音なしの位置〜0 は黒の細い線 (-20 より左にも少し伸びる)、0〜+3 は赤い帯
-    ctx.beginPath(); ctx.strokeStyle = BLACK; ctx.lineWidth = 1.5;
-    ctx.arc(CX, CY, VU_ARC_R, rad(START_DEG), rad(dbToAngle(0)));
-    ctx.stroke();
-    ctx.beginPath(); ctx.strokeStyle = RED; ctx.lineWidth = 5;
-    ctx.arc(CX, CY, VU_ARC_R + 2.5, rad(dbToAngle(0)), rad(dbToAngle(3)));
-    ctx.stroke();
+    // 弧。音なしの位置〜0 は黒の細い線、0〜+3 は赤い帯
+    arcLine(START_DEG, dbToAngle(0), 0, BLACK, 1.5);
+    arcLine(dbToAngle(0), dbToAngle(3), 2.5, RED, 5);
 
     // 目盛りと数字
     ctx.font = "bold 15px Arial"; ctx.textAlign = "center";
     VU_SCALE.forEach(m => {
         const v = m[0], deg = dbToAngle(v), color = v >= 0 ? RED : BLACK;
-        const a = pt(deg, VU_ARC_R), b = pt(deg, VU_ARC_R + (v >= 0 ? 13 : 10));
+        const a = pt(deg, 0), b = pt(deg, v >= 0 ? 13 : 10);
         ctx.beginPath(); ctx.strokeStyle = color; ctx.lineWidth = 2.2;
         ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
         const txt = String(Math.abs(v));
-        const t = pt(deg, VU_LABEL_R);
+        const t = pt(deg, VU_LABEL_GAP);
         const half = ctx.measureText(txt).width / 2;
         ctx.fillStyle = color;
         ctx.fillText(txt, Math.max(4 + half, Math.min(VU_W - 4 - half, t[0])), t[1] + 5);
     });
 
+    // 弧の内側のパーセント目盛り (100% = 0VU)。目立たない色で控えめに
+    ctx.font = "8px Arial"; ctx.fillStyle = SOFT;
+    [0, 20, 40, 60, 80, 100].forEach(pc => {
+        const deg = START_DEG + vuFrac(pc / 100) * (END_DEG - START_DEG);
+        const d = pt(deg, -5);
+        ctx.beginPath(); ctx.arc(d[0], d[1], 0.9, 0, Math.PI * 2); ctx.fill();
+        const t = pt(deg, -14);
+        ctx.fillText(pc === 100 ? "100%" : String(pc), t[0], t[1] + 3);
+    });
+
     // − と ＋ と VU
     ctx.font = "bold 13px Arial";
-    let t = pt(dbToAngle(-20), VU_ARC_R - 14); ctx.fillStyle = BLACK; ctx.fillText("−", t[0] + 6, t[1] + 6);
-    t = pt(dbToAngle(3), VU_ARC_R - 14);       ctx.fillStyle = RED;   ctx.fillText("+", t[0] - 6, t[1] + 6);
+    let t = pt(dbToAngle(-20), -24); ctx.fillStyle = BLACK; ctx.fillText("−", t[0] + 6, t[1] + 6);
+    t = pt(dbToAngle(3), -24);       ctx.fillStyle = RED;   ctx.fillText("+", t[0] - 6, t[1] + 6);
     ctx.font = "bold 18px Arial"; ctx.fillStyle = BLACK;
-    ctx.fillText("VU", CX, VU_H - 16);
+    ctx.fillText("VU", CX, VU_H - 14);
 }
 drawVUBase("cvsL"); drawVUBase("cvsR");
+
+// ===== 入力レベル =====
+// 左のスライダー: L と R の両方に効く。右のスライダー: R だけ。
+// 左を動かすと、右も同じだけ一緒に動く。右だけを動かすと、R だけが変わる
+let gainLdB = 0, gainRdB = 0, gainROffset = 0;
+let inGainL = null, inGainR = null;     // 電源ON中だけ入る
+const sliderDb = (c, f) => (parseFloat(document.getElementById(c).value) - 20) + parseFloat(document.getElementById(f).value);
+function setRSliders(db){
+    db = Math.max(-21, Math.min(21, db));
+    const c = Math.max(-20, Math.min(20, Math.round(db)));
+    const f = Math.max(-1, Math.min(1, Math.round((db - c) * 10) / 10));
+    document.getElementById("vuGainCoarseR").value = c + 20;
+    document.getElementById("vuGainFineR").value = f;
+}
+function applyGains(){
+    if (inGainL) inGainL.gain.value = Math.pow(10, gainLdB / 20);
+    if (inGainR) inGainR.gain.value = Math.pow(10, gainRdB / 20);
+}
+function onMainGain(){
+    gainLdB = sliderDb("vuGainCoarse", "vuGainFine");
+    setRSliders(gainLdB + gainROffset);
+    gainRdB = sliderDb("vuGainCoarseR", "vuGainFineR");
+    applyGains();
+}
+function onRGain(){
+    gainRdB = sliderDb("vuGainCoarseR", "vuGainFineR");
+    gainROffset = gainRdB - gainLdB;
+    applyGains();
+}
+["vuGainCoarse", "vuGainFine"].forEach(id => document.getElementById(id).addEventListener("input", onMainGain));
+["vuGainCoarseR", "vuGainFineR"].forEach(id => document.getElementById(id).addEventListener("input", onRGain));
+onMainGain();
+
+// ===== 入力モード =====
+// STEREO: 入ってきたとおりに表示する。入力が1chなら、Rは無音のまま表示する
+// MONO  : 入力の1ch目を、LとRの両方に入れる (自分で選んだときだけ)
+// 開いたときは必ず LR (ステレオ) から始める。LL のまま開いて R の無音を見落とさないように
+let inputMode = "stereo";
+let applyInputRoute = null;   // 電源ON中だけ、配線をつなぎ直す関数が入る
+function setInputMode(mode){
+    inputMode = mode;
+    document.getElementById("modeStereo").classList.toggle("on", mode === "stereo");
+    document.getElementById("modeMono").classList.toggle("on", mode === "mono");
+    if (applyInputRoute) applyInputRoute();
+}
+document.getElementById("modeStereo").onclick = () => setInputMode("stereo");
+document.getElementById("modeMono").onclick = () => setInputMode("mono");
+setInputMode(inputMode);
 
 const micSelect = document.getElementById('micSelect');
 const btn = document.getElementById("btn");
@@ -709,7 +806,7 @@ navigator.mediaDevices.getUserMedia({ audio: true }).then(s => {
 });
 
 btn.onclick = async () => {
-    if (audioCtx) { audioCtx.close(); audioCtx = null; btn.innerText = "POWER OFF"; btn.classList.remove("on"); return; }
+    if (audioCtx) { applyInputRoute = null; inGainL = inGainR = null; audioCtx.close(); audioCtx = null; btn.innerText = "POWER OFF"; btn.classList.remove("on"); return; }
     
     // 遅れをできるだけ小さくするよう、ブラウザに要求する (聞いてくれるかは機種しだい)
     const AC = window.AudioContext || window.webkitAudioContext;
@@ -820,7 +917,31 @@ const RTA_LO_MS = 100;    // 低域用：1秒に約10回
 let rtaHiT = 0, rtaLoT = 0;
     
     anaL.fftSize = anaR.fftSize = 2048;
-    src.connect(gainNode);
+    // 入力 → (モードに応じて配線) → gainNode。gainNode はいつも 2ch、複製や混ぜ合わせはしない
+    gainNode.channelCount = 2;
+    gainNode.channelCountMode = "explicit";
+    gainNode.channelInterpretation = "discrete";
+    const inSplit = audioCtx.createChannelSplitter(2);
+    const inMerge = audioCtx.createChannelMerger(2);
+    inGainL = audioCtx.createGain();
+    inGainR = audioCtx.createGain();
+    applyGains();
+    src.connect(inSplit);
+    inGainL.connect(inMerge, 0, 0);
+    inGainR.connect(inMerge, 0, 1);
+    inMerge.connect(gainNode);
+    applyInputRoute = () => {
+        try { inSplit.disconnect(); } catch (e) {}
+        const tr = stream.getAudioTracks()[0];
+        const ch = tr && tr.getSettings ? tr.getSettings().channelCount : undefined;
+        inSplit.connect(inGainL, 0);                          // L はいつも 1ch目
+        if (inputMode === "mono") {
+            inSplit.connect(inGainR, 0);                      // LL: 1ch目を R にも
+        } else if (ch !== 1) {
+            inSplit.connect(inGainR, 1);                      // LR: 2ch目を R に
+        }                                                     // LR で入力が1ch: R は無音のまま
+    };
+    applyInputRoute();
 gainNode.gain.value = 1;
 
 gainNode.connect(splitter);
@@ -966,18 +1087,12 @@ loudProc.connect(audioCtx.destination);   // 動かすためにつなぐ。音�
         const vuFrames = vuLastT === null ? 1 :
             Math.max(0, Math.min(6, (vuNow - vuLastT) / 1000 * VU_REF_FPS));
         vuLastT = vuNow;
-        const coarse = parseFloat(document.getElementById("vuGainCoarse").value);
-const fine   = parseFloat(document.getElementById("vuGainFine").value);
 const sG     = parseFloat(document.getElementById("scopeGain").value);
 
-// 合算
-const totalDb = (coarse - 20) + fine;
-
-// ゲイン反映
-gainNode.gain.value = Math.pow(10, totalDb / 20);
-
-// 表示
-setText("vuVal", (totalDb >= 0 ? "+" : "") + totalDb.toFixed(1) + " dB");
+// 表示 (ゲインはスライダーを動かしたときに反映済み)
+const sgn = v => (v >= 0 ? "+" : "") + v.toFixed(1);
+setText("vuVal", sgn(gainLdB) + " dB");
+setText("vuValR", "R " + sgn(gainRdB) + " dB");
         setText("scopeVal", "x" + sG.toFixed(1));
 
         anaL.getFloatTimeDomainData(bufL); anaR.getFloatTimeDomainData(bufR);
