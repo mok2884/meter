@@ -45,7 +45,7 @@ body { background-color: #050505; margin: 0; display: flex; flex-direction: colu
 .knob-group { display: flex; flex-direction: column; align-items: center; gap: 5px; font-size: 12px; }
 select { background: #333; color: #fff; border: 1px solid #555; padding: 5px; border-radius: 4px; width: 200px; margin-bottom: 10px; }
 input[type=range] { width: 130px; cursor: pointer; }
-#btn { padding: 10px 30px; cursor: pointer; font-weight: bold; border-radius: 4px; border: none; background: #444; color: white; }
+#btn { padding: 10px 0; width: 140px; flex-shrink: 0; white-space: nowrap; cursor: pointer; font-weight: bold; border-radius: 4px; border: none; background: #444; color: white; }
 #btn.on { background: #d00; }
 canvas { position: absolute; top: 0; left: 0; z-index: 5; }
     .rta-window {
@@ -138,7 +138,7 @@ input[type=range].rTrim{ accent-color:#5a5a5a; filter:grayscale(1) brightness(0.
             <button id="modeStereo" class="selbtn" title="ステレオ (L→L、R→R)">LR</button>
             <button id="modeMono" class="selbtn" title="モノラル (L を両方へ)">LL</button>
         </div>
-        <div id="latVal" style="font-size:11px; color:#888; height:14px; white-space:nowrap; font-variant-numeric:tabular-nums;"></div>
+        <div id="latVal" style="font-size:11px; color:#888; height:14px; width:292px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:center; font-variant-numeric:tabular-nums;"></div>
     </div>
 
 </div>
@@ -314,15 +314,18 @@ window.addEventListener("orientationchange", () => setTimeout(fitScreen, 300));
 // 2段構え。(1) ブラウザに「画面を消さないで」と頼む (Wake Lock)。
 // (2) 断られる機種もあるので、音のない小さな動画を裏で流し続けて、画面を起こしておく。
 // (2) の動画は NoSleep.js (MIT License, Copyright (c) Rich Tibbett) に含まれるものを使用
-let wakeLock = null, keepAwakeState = "";
+// 状態の表示: WL = Wake Lockが効いている / VID = 動画で起こしている / NO = どちらも効いていない / -- = まだ試していない
+let wakeLock = null, keepAwakeState = "--", videoAwake = false;
+function updateAwakeState(){
+    keepAwakeState = wakeLock ? "WL" : videoAwake ? "VID" : "NO";
+}
 async function requestWakeLock(){
-    if (!('wakeLock' in navigator)) { keepAwakeState = "WakeLockなし"; return; }
-    if (wakeLock) return;
+    if (!('wakeLock' in navigator) || wakeLock) return;
     try {
         wakeLock = await navigator.wakeLock.request('screen');
-        keepAwakeState = "WakeLock";
-        wakeLock.addEventListener('release', () => { wakeLock = null; });
-    } catch (e) { keepAwakeState = "WakeLock " + e.name; }
+        wakeLock.addEventListener('release', () => { wakeLock = null; updateAwakeState(); });
+    } catch (e) {}
+    updateAwakeState();
 }
 const keepAwakeVideo = (() => {
     const v = document.createElement("video");
@@ -342,8 +345,10 @@ const keepAwakeVideo = (() => {
 function keepAwake(){
     requestWakeLock();
     keepAwakeVideo.play().then(() => {
-        if (!wakeLock) keepAwakeState = "動画";
-    }).catch(() => {});
+        videoAwake = true; updateAwakeState();
+    }).catch(() => {
+        videoAwake = false; updateAwakeState();
+    });
 }
 // 画面に触れたとき、POWER ON のとき、裏から戻ったときに、毎回頼み直す
 document.addEventListener('pointerdown', keepAwake);
@@ -879,14 +884,15 @@ btn.onclick = async () => {
         const ms = v => (typeof v === "number" && isFinite(v)) ? (v * 1000).toFixed(0) + "ms" : "--";
         const tr = stream.getAudioTracks()[0];
         const st = tr && tr.getSettings ? tr.getSettings() : {};
+        const sr = audioCtx.sampleRate / 1000;
         document.getElementById("latVal").innerText =
-            "遅れ 入力 " + ms(st.latency) +
-            " / 処理 " + ms(audioCtx.baseLatency) +
-            " / " + audioCtx.sampleRate + "Hz " + (st.channelCount || "?") + "ch" +
-            " / スリープ防止 " + (keepAwakeState || "--");
+            "IN " + ms(st.latency) +
+            " / " + ms(audioCtx.baseLatency) +
+            " / " + (Number.isInteger(sr) ? sr : sr.toFixed(1)) + "k " + (st.channelCount || "?") + "ch" +
+            " / " + keepAwakeState;
     };
     showLatency();
-    setTimeout(showLatency, 1500);
+    const latTimer = setInterval(() => { if (!audioCtx) clearInterval(latTimer); else showLatency(); }, 2000);
     
     const src = audioCtx.createMediaStreamSource(stream);
     const splitter = audioCtx.createChannelSplitter(2);
