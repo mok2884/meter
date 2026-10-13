@@ -353,6 +353,9 @@ document.addEventListener('visibilitychange', () => {
 
 // ===== VUの文字盤 (針の角度・軸・目盛りの位置は実機に合わせてある。見た目は独自) =====
 const VU_W = 280, VU_H = 145;
+// 校正: 1kHz の正弦波を -20dBFS で入れたとき、ちょうど 0VU を指すようにする値
+// (正弦波の絶対値の平均は ピーク×2/π。-20dBFS = ピーク0.1 → 20log10(1 / (0.1×2/π)) = 23.92)
+const VU_CAL = 20 * Math.log10(1 / (0.1 * 2 / Math.PI));
 const CX = 140, CY = 181;                 // 針の軸。窓の下端より31px下
 const START_DEG = 133, END_DEG = 47;      // 針が振れる範囲 (水平から測って左右とも47度)
 const VU_ARC_R = 140;                     // 振り切り位置での、針の軸から弧までの距離
@@ -1152,11 +1155,11 @@ vuCarry -= Math.floor(vuCarry);
             const vuNew = Math.max(1, Math.min(bufL.length, Math.round(vuDt * audioCtx.sampleRate)));
             const lvL = vuStep(vuStL, vuMeanAbs(bufL, vuNew), vuDt);
             const lvR = vuStep(vuStR, vuMeanAbs(bufR, vuNew), vuDt);
-            currentL = dbToAngle(Math.max(-200, Math.min(3, 20 * Math.log10(lvL || 0.00001) + 23.8)));
-            currentR = dbToAngle(Math.max(-200, Math.min(3, 20 * Math.log10(lvR || 0.00001) + 23.8)));
+            currentL = dbToAngle(Math.max(-200, Math.min(3, 20 * Math.log10(lvL || 0.00001) + VU_CAL)));
+            currentR = dbToAngle(Math.max(-200, Math.min(3, 20 * Math.log10(lvR || 0.00001) + VU_CAL)));
         } else {
-            const targetL = dbToAngle(Math.max(-200, Math.min(3, 20 * Math.log10(vuAvgPush(vuAvgL, bufL, vuN) || 0.00001) + 23.8)));
-            const targetR = dbToAngle(Math.max(-200, Math.min(3, 20 * Math.log10(vuAvgPush(vuAvgR, bufR, vuN) || 0.00001) + 23.8)));
+            const targetL = dbToAngle(Math.max(-200, Math.min(3, 20 * Math.log10(vuAvgPush(vuAvgL, bufL, vuN) || 0.00001) + VU_CAL)));
+            const targetR = dbToAngle(Math.max(-200, Math.min(3, 20 * Math.log10(vuAvgPush(vuAvgR, bufR, vuN) || 0.00001) + VU_CAL)));
 
             const vuK = 1 - Math.pow(1 - VU_SMOOTH, vuFrames);
             currentL += (targetL - currentL) * vuK;
