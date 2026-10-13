@@ -862,7 +862,11 @@ btn.onclick = async () => {
     
     // 遅れをできるだけ小さくするよう、ブラウザに要求する (聞いてくれるかは機種しだい)
     const AC = window.AudioContext || window.webkitAudioContext;
-    try { audioCtx = new AC({ latencyHint: 0 }); } catch (e) { audioCtx = new AC(); }
+    // アドレスの最後に ?sr=96000 のように付けると、その周波数で動かす (入力機器と合わせて変換をなくす実験用)
+    const srWant = parseInt(new URLSearchParams(location.search).get("sr"), 10);
+    const acOpt = { latencyHint: 0 };
+    if (srWant >= 8000 && srWant <= 192000) acOpt.sampleRate = srWant;
+    try { audioCtx = new AC(acOpt); } catch (e) { try { audioCtx = new AC({ latencyHint: 0 }); } catch (e2) { audioCtx = new AC(); } }
     
     const constraints = { 
         audio: { 
@@ -891,8 +895,11 @@ btn.onclick = async () => {
     const tr0 = stream.getAudioTracks()[0];
     const st0 = tr0 && tr0.getSettings ? tr0.getSettings() : {};      // 入力機器の情報は最初に1回だけ
     const sr0 = audioCtx.sampleRate / 1000;
+    const kHz = v => { const k = v / 1000; return Number.isInteger(k) ? String(k) : k.toFixed(1); };
+    // 入力機器の周波数 > メーターの処理の周波数 (違うときはブラウザが変換している)
+    const devSr = st0.sampleRate ? kHz(st0.sampleRate) + ">" : "";
     const latHead = "IN " + ms(st0.latency) + " / " + ms(audioCtx.baseLatency) +
-        " / " + (Number.isInteger(sr0) ? sr0 : sr0.toFixed(1)) + "k " + (st0.channelCount || "?") + "ch";
+        " / " + devSr + kHz(audioCtx.sampleRate) + "k " + (st0.channelCount || "?") + "ch";
     const showLatency = () => {
         if (!audioCtx) return;
         setText("latVal", latHead + " / " + keepAwakeState);
